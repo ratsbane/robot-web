@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Arm Control</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <h1>Robot Arm Control</h1>
+    <img src="/video_feed" width="640" height="480">
+
+    <div id="status"></div>
+
+    <script>
+        const socket = io(); // Connect to the Socket.IO server
+
+        socket.on('connect', () => {
+            document.getElementById('status').innerText = 'Connected';
+        });
+
+        socket.on('status', (data) => {
+            document.getElementById('status').innerText = data.message;
+        });
+
+        socket.on('error', (data) => {
+            document.getElementById('status').innerText = 'Error: ' + data.message;
+        });
+        
+        document.addEventListener('keydown', (event) => {
+            switch (event.key) {
+                case 'ArrowLeft':
+                    socket.emit('command', { command: 'move_base_left' });
+                    break;
+                case 'ArrowRight':
+                    socket.emit('command', { command: 'move_base_right' });
+                    break;
+                case ' ': // Spacebar for stop
+                    socket.emit('command', {command: 'stop_base'})
+                    break;
+                // Add more cases for other keys
+            }
+        });
+       document.addEventListener('keyup', (event) => { // Stop motion on keyup
+            switch (event.key) {
+                case 'ArrowLeft':
+                case 'ArrowRight':
+                    socket.emit('command', { command: 'stop_base' });
+                    break;
+                // Add more cases for other keys
+            }
+        });
+    </script>
+</body>
+</html>

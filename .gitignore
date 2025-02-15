@@ -1,0 +1,18 @@
+# Ignore virtual environment directory
+venv/
+
+# Ignore compiled Python files
+*.pyc
+__pycache__/
+
+# Ignore calibration data (if you don't want to track it)
+calibration.json
+
+# Ignore any OS-generated files
+.DS_Store
+Thumbs.db
+
+# Ignore editor-specific files/directories (add more as needed)
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,27 @@
+{
+    "1": {
+        "min": 744,
+        "max": 3543,
+        "name": "base"
+    },
+    "2": {
+        "min": 839,
+        "max": 2557,
+        "name": "shoulder"
+    },
+    "3": {
+        "min": 895,
+        "max": 3142,
+        "name": "elbow"
+    },
+    "4": {
+        "min": 761,
+        "max": 3232,
+        "name": "wrist"
+    },
+    "6": {
+        "min": 828,
+        "max": 2504,
+        "name": "thumb"
+    }
+}
