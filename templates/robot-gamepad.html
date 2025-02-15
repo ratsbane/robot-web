@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Arm Control</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        /* Add some basic styling */
+        body { font-family: sans-serif; }
+        #status { margin-top: 10px; }
+        #gamepadStatus { margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Robot Arm Control</h1>
+    <img src="/video_feed" width="640" height="480">
+
+    <div id="status"></div>
+    <div id="gamepadStatus">Gamepad: Not Connected</div>
+
+    <script>
+        const socket = io();
+
+        socket.on('connect', () => {
+            document.getElementById('status').innerText = 'Connected';
+        });
+
+        socket.on('status', (data) => {
+            document.getElementById('status').innerText = data.message;
+        });
+
+        socket.on('error', (data) => {
+            document.getElementById('status').innerText = 'Error: ' + data.message;
+        });
+
+        let gamepadIndex = null;
+
+        // --- Gamepad Connection Handling ---
+
+        window.addEventListener("gamepadconnected", (event) => {
+            console.log("Gamepad connected:", event.gamepad);
+            gamepadIndex = event.gamepad.index;
+            document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
+            gameLoop(); // Start the game loop when a gamepad is connected
+        });
+
+        window.addEventListener("gamepaddisconnected", (event) => {
+            console.log("Gamepad disconnected:", event.gamepad);
+            gamepadIndex = null;
+            document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
+        });
+
+        // --- Game Loop (for continuous input) ---
+
+        function gameLoop() {
+            if (gamepadIndex !== null) {
+                const gamepad = navigator.getGamepads()[gamepadIndex];
+
+                if (gamepad) { // Check if gamepad is still valid
+                    // --- Left Joystick (Base and Shoulder) ---
+                    const leftX = gamepad.axes[0];
+                    const leftY = gamepad.axes[1];
+
+                    if (Math.abs(leftX) > 0.1) { // Deadzone
+                        if (leftX > 0) {
+                            socket.emit('command', { command: 'move_base_right' });
+                        } else {
+                            socket.emit('command', { command: 'move_base_left' });
+                        }
+                    } else {
+                        socket.emit('command', {command: 'stop_base'})
+                    }
+
+                    if (Math.abs(leftY) > 0.1) {
+                        if (leftY > 0) {
+                             socket.emit('command', { command: 'move_shoulder_down'});
+                        } else {
+                            socket.emit('command', {command: 'move_shoulder_up'});
+                        }
+                    } else {
+                        socket.emit('command', {command: 'stop_shoulder'})
+                    }
+                    // --- Right Joystick (Elbow and wrist) ---
+                    const rightY = gamepad.axes[4];
+                    const rightX = gamepad.axes[3];
+
+                    if(Math.abs(rightY) > 0.1){
+                        if(rightY > 0){
+                            socket.emit('command', {command: 'move_elbow_down'});
+                        } else {
+                            socket.emit('command', {command: 'move_elbow_up'});
+                        }
+                    } else {
+                        socket.emit('command', {command: 'stop_elbow'});
+                    }
+
+                    if(Math.abs(rightX) > 0.1){
+                        if(rightX > 0){
+                            socket.emit('command', {command: 'move_wrist_right'});
+                        } else {
+                            socket.emit('command', {command: 'move_wrist_left'});
+                        }
+                    } else {
+                         socket.emit('command', {command: 'stop_wrist'});
+                    }
+
+                    // --- Triggers ---
+                    const leftTrigger = gamepad.buttons[6].value;   //Left trigger
+                    const rightTrigger = gamepad.buttons[7].value;  //Right trigger
+
+                    if(leftTrigger > 0.2){
+                        socket.emit('command', {command: 'move_hand'});
+                    } else {
+                        socket.emit('command', {command: 'stop_hand'})
+                    }
+
+                    if(rightTrigger > 0.2){
+                        socket.emit('command', {command: 'move_thumb'});
+                    } else {
+                        socket.emit('command', {command: 'stop_thumb'})
+                    }
+                    // Add more button/axis handling here, as needed
+
+                }
+            }
+
+            requestAnimationFrame(gameLoop); // Call gameLoop again on the next frame
+        }
+
+
+    </script>
+</body>
+</html>

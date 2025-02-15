@@ -8,9 +8,8 @@
     <h1>Robot Arm Control - Minimal Test</h1>
     <div id="status"></div>
     <script>
-        //const socket = io();
-        //const socket = io('http://192.168.86.32:5000');
-        const socket = io('http://robot:5000');
+        const socket = io();
+
         socket.on('connect', () => {
             document.getElementById('status').innerText = 'Connected';
         });

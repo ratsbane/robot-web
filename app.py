@@ -1,10 +1,15 @@
 import os
 import sys
 import time
-import cv2
+import cv2  # Needed for imdecode
 from flask import Flask, render_template, Response
 from flask_socketio import SocketIO, emit
 from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, sts, CALIBRATED_MOTORS
+import multiprocessing  # For shared Value
+# import multiprocessing.shared_memory # No longer needed
+import numpy as np
+# from camera import CameraProcess  # No longer needed here
+import gunicorn_conf  # Import the gunicorn config
 
 # --- Set working directory and sys.path ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,12 +19,6 @@ sys.path.insert(0, current_dir)
 # --- Flask App Initialization ---
 app = Flask(__name__)
 socketio = SocketIO(app)
-
-# --- Global Camera Initialization ---
-camera = cv2.VideoCapture(0)  # Use the correct index!
-if not camera.isOpened():
-    print("Error: Could not open camera globally")
-    camera = None
 
 # --- Robot Arm Initialization ---
 device = scan_interfaces_for_arm()
@@ -49,27 +48,46 @@ else:
                 print(f"Warning: Motor ID {motor_id} not found in calibration data.")
         time.sleep(3)
         arm_connected = True
-
-    # --- Explicitly Close Serial Port ---
     if port_handler:
-        port_handler.closePort()
+        port_handler.closePort()  # Close the serial port
 
 # --- Video Streaming Function ---
 def generate_frames():
     while True:
-        if camera:
-            success, frame = camera.read()
-            if not success:
-                break
+        with gunicorn_conf.lock:  #Acquire lock to check frame_ready
+            if gunicorn_conf.frame_ready.value == 1:
+                current_buffer = gunicorn_conf.active_buffer_index.value
+
+                #Create copy of frame data
+                frame_data = bytes(gunicorn_conf.frame_data_list[current_buffer][:])
+                try:
+                    # Decode the JPEG data *within* the Flask worker
+                    frame = cv2.imdecode(np.frombuffer(frame_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+                    if frame is not None:  # Check if decoding was successful
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        if not ret:
+                            print("Error encoding frame")
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
+                            continue
+                        encoded_frame = buffer.tobytes()
+                        yield (b'--frame\r\n'
+                                b'Content-Type: image/jpeg\r\n\r\n' + encoded_frame + b'\r\n')
+                    else:
+                        time.sleep(0.01)
+                        yield (b'--frame\r\n'
+                                b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
+
+                except Exception as e:
+                    print(f"Decoding/Encoding Exception: {e}")
+                    time.sleep(0.01)
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
             else:
-                ret, buffer = cv2.imencode('.jpg', frame)
-                frame = buffer.tobytes()
+                time.sleep(0.01)
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        else:
-            yield (b'--frame\r\n'
-                    b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
-            time.sleep(1)
+                       b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')  # Empty frame
 
 @app.route('/video_feed')
 def video_feed():
@@ -88,6 +106,7 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     print('Client disconnected')
+
 
 @socketio.on('command')
 def handle_command(data):
@@ -171,6 +190,13 @@ def handle_command(data):
             else:
                 emit('error', {'message': f'Unknown motor to stop: {motor_name}'})
                 return
+        elif command == 'stop_all':
+            for motor_id in CALIBRATED_MOTORS:
+                motor_name = motor_controller.initial_motor_data[motor_id]['name']
+                result = motor_controller.move_motor(motor_id, motor_name, 0, 0)
+                if not result['success']:
+                    break
+
     else:
         emit('error', {'message': f'Unknown command: {command}'})
         return
@@ -181,9 +207,4 @@ def handle_command(data):
         emit('error', {'message': result['message']})
 
 if __name__ == '__main__':
-    # Do NOT use socketio.run() when running with Gunicorn
-    # For development (without Gunicorn):
-    # socketio.run(app, host='0.0.0.0', port=5000, debug=True, use_reloader=False)
-    # For production (with Gunicorn):  Don't use socketio.run here.
     pass
-
