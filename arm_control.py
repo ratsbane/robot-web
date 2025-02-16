@@ -4,10 +4,9 @@ import json
 # --- Add these lines at the VERY TOP ---
 import os
 import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
-# --- End added lines ---
+sdk_path = os.path.abspath('/home/pi/so-arm-configure/STservo_sdk')
+if sdk_path not in sys.path:
+    sys.path.insert(0, sdk_path)
 
 from STservo_sdk import *
 
