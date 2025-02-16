@@ -16,11 +16,11 @@
         #command-history {
             margin-top: 10px;
             border: 1px solid #ccc;
-            height: 100px; /* Or whatever height you want */
-            overflow-y: scroll; /* Enable vertical scrolling */
+            height: 100px;
+            overflow-y: scroll;
             padding: 5px;
         }
-        #error-display { /* Add style for error display */
+        #error-display {
             margin-top: 10px;
             color: red;
             font-weight: bold;
@@ -51,99 +51,130 @@
             </ul>
         </div>
         <div id="current-command">Current Command: None</div>
-        <div id="error-display"></div>  <div id="command-history"></div>
+        <div id="error-display"></div>
+        <div id="command-history"></div>
+        <button id="reconnectButton">Reconnect</button>
     </div>
 
-    <script>
-      let socket = new WebSocket("ws://robot:5000/ws");
-      let currentCommandDisplay = document.getElementById('current-command');
-      let commandHistoryDiv = document.getElementById('command-history');
-      let errorDisplay = document.getElementById('error-display'); // Get error div
-      let socketReady = false; // Flag to track socket connection
+<script>
+    let socket;
+    let currentCommandDisplay = document.getElementById('current-command');
+    let commandHistoryDiv = document.getElementById('command-history');
+    let errorDisplay = document.getElementById('error-display');
+    let socketReady = false;
+    let reconnectInterval = 1000; // Initial reconnect delay (1 second)
+    let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
+    let reconnectTimeout;
 
-      socket.onopen = () => {
-        document.getElementById('status').innerText = 'Connected';
-        socketReady = true; // Set the flag to true when connected
-        errorDisplay.innerText = ''; // Clear any previous errors
-      }
+    function connectSocket() {
+        socket = new WebSocket("ws://robot:5000/ws");
 
-      socket.onmessage = (event) => {
-        document.getElementById('messages').innerText = event.data;
-        addToCommandHistory("Received: " + event.data); // Add received messages to history
-      }
+        socket.onopen = () => {
+            document.getElementById('status').innerText = 'Connected';
+            socketReady = true;
+            errorDisplay.innerText = ''; // Clear errors on successful connection
+            reconnectInterval = 1000; // Reset reconnect interval on successful connection
+            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
+        };
 
-      socket.onclose = () => {
-          document.getElementById('status').innerText = 'Disconnected';
-          socketReady = false; // Reset the flag
-      }
+        socket.onmessage = (event) => {
+            document.getElementById('messages').innerText = event.data;
+            addToCommandHistory("Received: " + event.data);
+        };
 
-      socket.onerror = (error) => {
-          //document.getElementById('status').innerText = 'Error: ' + error; //Removed
-          errorDisplay.innerText = 'WebSocket Error: ' + error; // Display error
-      };
+        socket.onclose = (event) => {
+            document.getElementById('status').innerText = 'Disconnected';
+            socketReady = false;
+            console.log('WebSocket closed:', event);
+            scheduleReconnect(); // Attempt to reconnect
+        };
 
-      const pressedKeys = {}; // Keep track of pressed keys
+        socket.onerror = (error) => {
+            errorDisplay.innerText = 'WebSocket Error: ' + error;
+            console.error('WebSocket error:', error);
+            //  socketReady = false; // Don't set here- onclose will handle.
+            //  scheduleReconnect(); // Don't call here - onclose handles it.
 
-      function sendCommand(command) {
-          if (socketReady) {  // Only send if the socket is open
-              console.log("Sending command:", command);
-              socket.send(command);
-              currentCommandDisplay.innerText = `Current Command: ${command}`; // Update display
-              addToCommandHistory("Sent: " + command); // Add sent commands to history.
-          } else {
-              // console.log("Socket not ready, cannot send command:", command); //Removed
-              errorDisplay.innerText = "Cannot send command: Socket not connected."; // Show error
-          }
-      }
+        };
+    }
+    function scheduleReconnect() {
+        if (!socketReady) { // Only attempt reconnect if not already connected/connecting
+            reconnectTimeout = setTimeout(() => {
+                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
+                connectSocket();
+                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
+            }, reconnectInterval);
+        }
+    }
 
-      function addToCommandHistory(command) {
-          const commandElement = document.createElement('div');
-          commandElement.innerText = command;
-          commandHistoryDiv.appendChild(commandElement);
-          commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight; // Auto-scroll to bottom
-      }
+    connectSocket(); // Initial connection
 
+    document.getElementById('reconnectButton').addEventListener('click', () => {
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            socket.close(); // Close any existing connection first
+        }
+      //Don't call connect socket directly.  Call scheduleReconnect.
+        scheduleReconnect(); // Manually trigger a reconnect attempt
+    });
 
-      document.addEventListener('keydown', (event) => {
-          if (pressedKeys[event.key]) {
-              return; // Key is already pressed, prevent repeated commands
-          }
-          pressedKeys[event.key] = true;
+    const pressedKeys = {}; // Keep track of pressed keys
 
-          switch (event.key) {
-              case 'ArrowLeft':  sendCommand('move_base_left'); break;
-              case 'ArrowRight': sendCommand('move_base_right'); break;
-              case 'ArrowUp':    sendCommand('move_shoulder_up'); break;
-              case 'ArrowDown':  sendCommand('move_shoulder_down'); break;
-              case 'w':          sendCommand('move_elbow_up'); break;
-              case 's':          sendCommand('move_elbow_down'); break;
-              case 'a':          sendCommand('move_wrist_left'); break;
-              case 'd':          sendCommand('move_wrist_right'); break;
-              case 'q':          sendCommand('move_hand'); break; // Toggle hand
-              case 'e':          sendCommand('move_thumb'); break; // Toggle thumb
-              case ' ':          sendCommand('stop_all'); break;
-          }
-      });
+     function sendCommand(command) {
+        if (socketReady) {
+            console.log("Sending command:", command);
+            socket.send(command);
+            currentCommandDisplay.innerText = `Current Command: ${command}`;
+            addToCommandHistory("Sent: " + command); // Add to history
+        } else {
+            errorDisplay.innerText = "Cannot send command: Socket not connected.";
+            console.log("Socket not ready, cannot send command:", command); // Log to console
+        }
+    }
 
-      document.addEventListener('keyup', (event) => {
-          pressedKeys[event.key] = false; // Mark key as released
-          currentCommandDisplay.innerText = `Current Command: None`;
+    function addToCommandHistory(command) {
+        const commandElement = document.createElement('div');
+        commandElement.innerText = command;
+        commandHistoryDiv.appendChild(commandElement);
+        commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
+    }
 
-          switch (event.key) {
-              case 'ArrowLeft':  // Explicit stop commands for each direction
-              case 'ArrowRight': sendCommand('stop_base'); break;
-              case 'ArrowUp':
-              case 'ArrowDown':  sendCommand('stop_shoulder'); break;
-              case 'w':
-              case 's':          sendCommand('stop_elbow'); break;
-              case 'a':
-              case 'd':          sendCommand('stop_wrist'); break;
-              // q, e, and space don't need keyup handling as they are toggles/stop all
-          }
-      });
+    document.addEventListener('keydown', (event) => {
+        if (pressedKeys[event.key]) {
+            return;
+        }
+        pressedKeys[event.key] = true;
 
-        // Gamepad code will go here later.
-    let gamepadIndex = null;
+        switch (event.key) {
+            case 'ArrowLeft':  sendCommand('move_base_left'); break;
+            case 'ArrowRight': sendCommand('move_base_right'); break;
+            case 'ArrowUp':    sendCommand('move_shoulder_up'); break;
+            case 'ArrowDown':  sendCommand('move_shoulder_down'); break;
+            case 'w':          sendCommand('move_elbow_up'); break;
+            case 's':          sendCommand('move_elbow_down'); break;
+            case 'a':          sendCommand('move_wrist_left'); break;
+            case 'd':          sendCommand('move_wrist_right'); break;
+            case 'q':          sendCommand('move_hand'); break;
+            case 'e':          sendCommand('move_thumb'); break;
+            case ' ':          sendCommand('stop_all'); break;
+        }
+    });
+
+    document.addEventListener('keyup', (event) => {
+        pressedKeys[event.key] = false;
+        currentCommandDisplay.innerText = `Current Command: None`;
+
+        switch (event.key) {
+            case 'ArrowLeft':
+            case 'ArrowRight': sendCommand('stop_base'); break;
+            case 'ArrowUp':
+            case 'ArrowDown':  sendCommand('stop_shoulder'); break;
+            case 'w':
+            case 's':          sendCommand('stop_elbow'); break;
+            case 'a':
+            case 'd':          sendCommand('stop_wrist'); break;
+        }
+    });
+        let gamepadIndex = null;
 
     // --- Gamepad Connection Handling ---
 
@@ -237,7 +268,6 @@
         requestAnimationFrame(gameLoop); // Call gameLoop again on the next frame
     }
 
-
-    </script>
+</script>
 </body>
 </html>

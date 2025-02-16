@@ -5,19 +5,20 @@ import cv2
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 import asyncio
-# --- Add STServo Path ---
-sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
+# --- Corrected Path ---
+sdk_path = os.path.abspath('/home/pi/so-arm-configure/')  # Corrected path
 if sdk_path not in sys.path:
     sys.path.insert(0, sdk_path)
-# --- End added lines ---
+# --- End Path Correction ---
 
 from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, sts, CALIBRATED_MOTORS
+import multiprocessing  # For the Event
+import signal  # For signal handling
 
 # --- Set working directory and sys.path ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(current_dir)
 sys.path.insert(0, current_dir)
-
 
 # --- Flask App Initialization ---  <-- Note: It's FastAPI now!
 app = FastAPI()
@@ -59,14 +60,17 @@ if not camera.isOpened():
     print("Error: Could not open camera")
     camera = None
 
+# --- Shutdown Event ---
+shutdown_event = multiprocessing.Event()
+
 async def generate_frames():
-    while True:
+    while not shutdown_event.is_set():  # Check for shutdown signal
         if camera:
             success, frame = camera.read()
             if not success:
-                await asyncio.sleep(0.1)  # Non-blocking sleep
+                await asyncio.sleep(0.1)
                 continue
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])  # Adjust quality as needed
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
             if not ret:
                 await asyncio.sleep(0.1)
                 continue
@@ -76,7 +80,11 @@ async def generate_frames():
         else:
             await asyncio.sleep(1)
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')  # Empty frame
+                   b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
+    print("generate_frames exiting.") # Debug print
+    if camera:
+        camera.release()
+        print ("Camera released")
 
 
 @app.get("/")
@@ -97,7 +105,7 @@ RCS_PORT = 9000
 
 def send_command_to_rcs(command: str) -> str:
     """Sends a command to the Robot Control Service and returns the response."""
-    import socket # THIS MUST BE HERE
+    import socket  # Import socket here
 
     print(f"send_command_to_rcs called with command: {command}")
     try:
@@ -123,7 +131,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("Client connected (FastAPI WebSocket)")
     try:
-        while True:
+        while not shutdown_event.is_set(): #Also check here.
             data = await websocket.receive_text()
             print(f"Received command (FastAPI): {data}")
 
@@ -139,3 +147,15 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"WebSocket error in handle_command: {e}")
 
+def shutdown():
+    print("Shutting down...")
+    shutdown_event.set()  # Signal the shutdown event
+    if camera:
+        camera.release()
+    sys.exit(0) # Exit
+
+# --- Signal Handler for Ctrl+C ---
+def signal_handler(sig, frame):
+    shutdown()
+
+signal.signal(signal.SIGINT, signal_handler) #Register the signal handler
