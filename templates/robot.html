@@ -1,27 +1,243 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Robot Arm Control - Minimal Test</title>
+    <title>Robot Arm Control</title>
+    <style>
+        body { font-family: sans-serif; display: flex; }
+        #video-container { flex: 1; }
+        #controls { width: 250px; padding: 10px; border-left: 1px solid #ccc; }
+        #status { margin-top: 10px; }
+        #messages { margin-top: 10px; font-weight: bold; }
+        #gamepadStatus { margin-top: 10px; font-weight: bold; }
+        #key-guide { margin-top: 20px; }
+        #key-guide ul { list-style: none; padding: 0; }
+        #key-guide li { margin-bottom: 5px; }
+        #current-command { margin-top: 10px; font-weight: bold; color: blue; }
+        #command-history {
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            height: 100px; /* Or whatever height you want */
+            overflow-y: scroll; /* Enable vertical scrolling */
+            padding: 5px;
+        }
+        #error-display { /* Add style for error display */
+            margin-top: 10px;
+            color: red;
+            font-weight: bold;
+        }
+    </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
-    <h1>Robot Arm Control - Minimal Test</h1>
-    <div id="status"></div>
+    <div id="video-container">
+        <h1>Robot Arm Control</h1>
+        <img src="/video_feed" width="640" height="480">
+        <div id="status"></div>
+        <div id="messages"></div>
+    </div>
+
+    <div id="controls">
+        <div id="gamepadStatus">Gamepad: Not Connected</div>
+        <div id="key-guide">
+            <h3>Key Controls:</h3>
+            <ul>
+                <li><strong>Base:</strong> Left/Right Arrows</li>
+                <li><strong>Shoulder:</strong> Up/Down Arrows</li>
+                <li><strong>Elbow:</strong> W/S</li>
+                <li><strong>Wrist:</strong> A/D</li>
+                <li><strong>Hand:</strong> Q (toggle)</li>
+                <li><strong>Thumb:</strong> E (toggle)</li>
+                <li><strong>Stop All:</strong> Spacebar</li>
+            </ul>
+        </div>
+        <div id="current-command">Current Command: None</div>
+        <div id="error-display"></div>  <div id="command-history"></div>
+    </div>
+
     <script>
-        //const socket = io();
-        //const socket = io('http://192.168.86.32:5000');
-        const socket = io('http://robot:5000');
-        socket.on('connect', () => {
-            document.getElementById('status').innerText = 'Connected';
-        });
+      let socket = new WebSocket("ws://robot:5000/ws");
+      let currentCommandDisplay = document.getElementById('current-command');
+      let commandHistoryDiv = document.getElementById('command-history');
+      let errorDisplay = document.getElementById('error-display'); // Get error div
+      let socketReady = false; // Flag to track socket connection
 
-        socket.on('status', (data) => {
-            document.getElementById('status').innerText = data.message;
-        });
+      socket.onopen = () => {
+        document.getElementById('status').innerText = 'Connected';
+        socketReady = true; // Set the flag to true when connected
+        errorDisplay.innerText = ''; // Clear any previous errors
+      }
 
-        socket.on('error', (data) => {
-            document.getElementById('status').innerText = 'Error: ' + data.message;
-        });
+      socket.onmessage = (event) => {
+        document.getElementById('messages').innerText = event.data;
+        addToCommandHistory("Received: " + event.data); // Add received messages to history
+      }
+
+      socket.onclose = () => {
+          document.getElementById('status').innerText = 'Disconnected';
+          socketReady = false; // Reset the flag
+      }
+
+      socket.onerror = (error) => {
+          //document.getElementById('status').innerText = 'Error: ' + error; //Removed
+          errorDisplay.innerText = 'WebSocket Error: ' + error; // Display error
+      };
+
+      const pressedKeys = {}; // Keep track of pressed keys
+
+      function sendCommand(command) {
+          if (socketReady) {  // Only send if the socket is open
+              console.log("Sending command:", command);
+              socket.send(command);
+              currentCommandDisplay.innerText = `Current Command: ${command}`; // Update display
+              addToCommandHistory("Sent: " + command); // Add sent commands to history.
+          } else {
+              // console.log("Socket not ready, cannot send command:", command); //Removed
+              errorDisplay.innerText = "Cannot send command: Socket not connected."; // Show error
+          }
+      }
+
+      function addToCommandHistory(command) {
+          const commandElement = document.createElement('div');
+          commandElement.innerText = command;
+          commandHistoryDiv.appendChild(commandElement);
+          commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight; // Auto-scroll to bottom
+      }
+
+
+      document.addEventListener('keydown', (event) => {
+          if (pressedKeys[event.key]) {
+              return; // Key is already pressed, prevent repeated commands
+          }
+          pressedKeys[event.key] = true;
+
+          switch (event.key) {
+              case 'ArrowLeft':  sendCommand('move_base_left'); break;
+              case 'ArrowRight': sendCommand('move_base_right'); break;
+              case 'ArrowUp':    sendCommand('move_shoulder_up'); break;
+              case 'ArrowDown':  sendCommand('move_shoulder_down'); break;
+              case 'w':          sendCommand('move_elbow_up'); break;
+              case 's':          sendCommand('move_elbow_down'); break;
+              case 'a':          sendCommand('move_wrist_left'); break;
+              case 'd':          sendCommand('move_wrist_right'); break;
+              case 'q':          sendCommand('move_hand'); break; // Toggle hand
+              case 'e':          sendCommand('move_thumb'); break; // Toggle thumb
+              case ' ':          sendCommand('stop_all'); break;
+          }
+      });
+
+      document.addEventListener('keyup', (event) => {
+          pressedKeys[event.key] = false; // Mark key as released
+          currentCommandDisplay.innerText = `Current Command: None`;
+
+          switch (event.key) {
+              case 'ArrowLeft':  // Explicit stop commands for each direction
+              case 'ArrowRight': sendCommand('stop_base'); break;
+              case 'ArrowUp':
+              case 'ArrowDown':  sendCommand('stop_shoulder'); break;
+              case 'w':
+              case 's':          sendCommand('stop_elbow'); break;
+              case 'a':
+              case 'd':          sendCommand('stop_wrist'); break;
+              // q, e, and space don't need keyup handling as they are toggles/stop all
+          }
+      });
+
+        // Gamepad code will go here later.
+    let gamepadIndex = null;
+
+    // --- Gamepad Connection Handling ---
+
+    window.addEventListener("gamepadconnected", (event) => {
+        console.log("Gamepad connected:", event.gamepad);
+        gamepadIndex = event.gamepad.index;
+        document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
+        gameLoop(); // Start the game loop when a gamepad is connected
+    });
+
+    window.addEventListener("gamepaddisconnected", (event) => {
+        console.log("Gamepad disconnected:", event.gamepad);
+        gamepadIndex = null;
+        document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
+    });
+
+    // --- Game Loop (for continuous input) ---
+
+    function gameLoop() {
+        if (gamepadIndex !== null) {
+            const gamepad = navigator.getGamepads()[gamepadIndex];
+
+            if (gamepad) { // Check if gamepad is still valid
+                // --- Left Joystick (Base and Shoulder) ---
+                const leftX = gamepad.axes[0];
+                const leftY = gamepad.axes[1];
+
+                if (Math.abs(leftX) > 0.1) { // Deadzone
+                    if (leftX > 0) {
+                        sendCommand('move_base_right');
+                    } else {
+                        sendCommand('move_base_left');
+                    }
+                } else {
+                    sendCommand('stop_base')
+                }
+
+                if (Math.abs(leftY) > 0.1) {
+                    if (leftY > 0) {
+                         sendCommand('move_shoulder_down');
+                    } else {
+                        sendCommand('move_shoulder_up');
+                    }
+                } else {
+                    sendCommand('stop_shoulder')
+                }
+                // --- Right Joystick (Elbow and wrist) ---
+                const rightY = gamepad.axes[4];
+                const rightX = gamepad.axes[3];
+
+                if(Math.abs(rightY) > 0.1){
+                    if(rightY > 0){
+                        sendCommand('move_elbow_down');
+                    } else {
+                        sendCommand('move_elbow_up');
+                    }
+                } else {
+                    sendCommand('stop_elbow');
+                }
+
+                if(Math.abs(rightX) > 0.1){
+                    if(rightX > 0){
+                        sendCommand('move_wrist_right');
+                    } else {
+                        sendCommand('move_wrist_left');
+                    }
+                } else {
+                     sendCommand('stop_wrist');
+                }
+
+                // --- Triggers ---
+                const leftTrigger = gamepad.buttons[6].value;   //Left trigger
+                const rightTrigger = gamepad.buttons[7].value;  //Right trigger
+
+                if(leftTrigger > 0.2){
+                    sendCommand('move_hand');
+                } else {
+                    sendCommand('stop_hand')
+                }
+
+                if(rightTrigger > 0.2){
+                    sendCommand('move_thumb');
+                } else {
+                    sendCommand('stop_thumb')
+                }
+                // Add more button/axis handling here, as needed
+
+            }
+        }
+
+        requestAnimationFrame(gameLoop); // Call gameLoop again on the next frame
+    }
+
+
     </script>
 </body>
 </html>

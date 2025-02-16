@@ -1,13 +1,18 @@
 import time
 import pyudev
-import os, sys, json
-sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
-if sdk_path not in sys.path:
-    sys.path.insert(0, sdk_path)
+import json
+# --- Add these lines at the VERY TOP ---
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+# --- End added lines ---
 
 from STservo_sdk import *
 
-# Constants (same as before)
+
+# Constants
 CALIBRATION_SPEED = 300
 CALIBRATION_ACCELERATION = 50
 CALIBRATION_BACKOFF = 50
@@ -18,6 +23,8 @@ THUMB_INITIAL_MIN = 2048
 THUMB_INITIAL_MAX = 2500
 CALIBRATION_FILE = "calibration.json"
 CALIBRATED_MOTORS = [1, 2, 3, 4, 6]  # Motors to calibrate, NO motor 5
+
+# --- (Rest of your arm_control.py code - MotorController, scan_interfaces, etc.) ---
 
 def scan_interfaces_for_arm():
     """Scan for SO-ARM100 robot arm connected via USB."""
@@ -45,9 +52,9 @@ class MotorController:
     def __init__(self, packet_handler):
         self.packet_handler = packet_handler
         self.last_positions = {}
-        self.wrist_direction = 1
-        self.thumb_direction = 1
-        self.motor_limits = {}
+        self.wrist_direction = 1  # 1 for one direction, -1 for the opposite
+        self.thumb_direction = 1  # Same toggle mechanism
+        self.motor_limits = {}  # Store calibrated min/max positions
         self.update_interval = MOVEMENT_UPDATE_INTERVAL
         # Initial motor definitions (used before calibration or if loading fails)
         self.initial_motor_data = {
@@ -119,7 +126,7 @@ class MotorController:
         target_position = 0 if direction < 0 else 4095
         self.write_pos_ex(motor_id, target_position, CALIBRATION_SPEED, CALIBRATION_ACCELERATION)
 
-    def find_limit(self, motor_id):
+    def find_limit(self, motor_id, direction):
         """Move motor until it stalls."""
         last_pos_result = self.packet_handler.ReadPos(motor_id)
         time.sleep(0.1)
@@ -200,4 +207,5 @@ class MotorController:
         with open(CALIBRATION_FILE, "w") as f:
             json.dump(self.motor_limits, f, indent=4)
         print("Calibration data saved.")
+
 
