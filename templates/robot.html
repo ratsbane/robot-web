@@ -65,56 +65,45 @@
     let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
     let reconnectTimeout;
 
-function connectSocket() {
-    socket = new WebSocket("ws://robot:5000/ws"); // CORRECT URL
+    function connectSocket() {
+        // Connect to the WebSocket server on port 8000
+        socket = new WebSocket("ws://robot:8000/ws");  // CORRECTED URL
 
-    socket.onopen = () => {
-        document.getElementById('status').innerText = 'Connected';
-        socketReady = true;
-        errorDisplay.innerText = ''; // Clear errors
-        reconnectInterval = 1000; // Reset interval
-        clearTimeout(reconnectTimeout); // Clear timeout
-    };
+        socket.onopen = () => {
+            document.getElementById('status').innerText = 'Connected';
+            socketReady = true;
+            errorDisplay.innerText = ''; // Clear errors on successful connection
+            reconnectInterval = 1000; // Reset reconnect interval on successful connection
+            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
+        };
 
-    socket.onmessage = (event) => {
-        document.getElementById('messages').innerText = event.data;
-        addToCommandHistory("Received: " + event.data);
-    };
+        socket.onmessage = (event) => {
+            //No change here: We are receiving a JSON string.
+            document.getElementById('messages').innerText = event.data;
+            addToCommandHistory("Received: " + event.data);
+        };
 
-    socket.onclose = (event) => {
-        document.getElementById('status').innerText = 'Disconnected';
-        socketReady = false;
-        console.log('WebSocket closed:', event);
-        scheduleReconnect(); // Reconnect on close
-    };
+        socket.onclose = (event) => {
+            document.getElementById('status').innerText = 'Disconnected';
+            socketReady = false;
+            console.log('WebSocket closed:', event);
+            scheduleReconnect(); // Attempt to reconnect
+        };
 
-    socket.onerror = (error) => {
-        errorDisplay.innerText = 'WebSocket Error: ' + error;
-        console.error('WebSocket error:', error);
-    };
-}
-
-function scheduleReconnect() {
-    if (!socketReady) {
-        reconnectTimeout = setTimeout(() => {
-            console.log(`Attempting to reconnect...`);
-            connectSocket();
-            reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval);
-        }, reconnectInterval);
+        socket.onerror = (error) => {
+            errorDisplay.innerText = 'WebSocket Error: ' + error;
+            console.error('WebSocket error:', error);
+        };
     }
-}
-
-connectSocket(); // Initial connection
-
-document.getElementById('reconnectButton').addEventListener('click', () => { //In HTML!
-    if (socket && socket.readyState !== WebSocket.CLOSED) {
-        socket.close();
+    function scheduleReconnect() {
+        if (!socketReady) { // Only attempt reconnect if not already connected/connecting
+            reconnectTimeout = setTimeout(() => {
+                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
+                connectSocket();
+                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
+            }, reconnectInterval);
+        }
     }
-    scheduleReconnect();
-});
-
-
-
 
     connectSocket(); // Initial connection
 
@@ -128,10 +117,10 @@ document.getElementById('reconnectButton').addEventListener('click', () => { //I
 
     const pressedKeys = {}; // Keep track of pressed keys
 
-     function sendCommand(command) {
+    function sendCommand(command) {
         if (socketReady) {
             console.log("Sending command:", command);
-            socket.send(command);
+            socket.send(command); //SEND THE JSON STRING
             currentCommandDisplay.innerText = `Current Command: ${command}`;
             addToCommandHistory("Sent: " + command); // Add to history
         } else {
@@ -140,59 +129,67 @@ document.getElementById('reconnectButton').addEventListener('click', () => { //I
         }
     }
 
-    function addToCommandHistory(command) {
+    function addToCommandHistory(entry) {
         const commandElement = document.createElement('div');
-        commandElement.innerText = command;
+        commandElement.innerText = entry;
         commandHistoryDiv.appendChild(commandElement);
         commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
     }
 
     document.addEventListener('keydown', (event) => {
-        if (pressedKeys[event.key]) {
-            return;
-        }
-        pressedKeys[event.key] = true;
+    if (pressedKeys[event.key]) {
+        return; // Key already pressed
+    }
+    pressedKeys[event.key] = true;
 
-        switch (event.key) {
-            case 'ArrowLeft':  sendCommand('move_base_left'); break;
-            case 'ArrowRight': sendCommand('move_base_right'); break;
-            case 'ArrowUp':    sendCommand('move_shoulder_up'); break;
-            case 'ArrowDown':  sendCommand('move_shoulder_down'); break;
-            case 'w':          sendCommand('move_elbow_up'); break;
-            case 's':          sendCommand('move_elbow_down'); break;
-            case 'a':          sendCommand('move_wrist_left'); break;
-            case 'd':          sendCommand('move_wrist_right'); break;
-            case 'q':          sendCommand('move_hand'); break; // Toggle hand
-            case 'e':          sendCommand('move_thumb'); break; // Toggle thumb
-            case ' ':          sendCommand('stop_all'); break;
-        }
-    });
+    let command = null; // Store the command as an object
+    switch (event.key) {
+        case 'ArrowLeft':  command = {command: 'move_to', motor: 'base',   position: motor_controller.motor_limits.base.min_pos}; break; //Use min and max.
+        case 'ArrowRight': command = {command: 'move_to', motor: 'base',   position: motor_controller.motor_limits.base.max_pos}; break;
+        case 'ArrowUp':    command = {command: 'move_to', motor: 'shoulder', position: motor_controller.motor_limits.shoulder.min_pos}; break;
+        case 'ArrowDown':  command = {command: 'move_to', motor: 'shoulder', position: motor_controller.motor_limits.shoulder.max_pos}; break;
+        case 'w':          command = {command: 'move_to', motor: 'elbow',    position: motor_controller.motor_limits.elbow.min_pos}; break;
+        case 's':          command = {command: 'move_to', motor: 'elbow',    position: motor_controller.motor_limits.elbow.max_pos}; break;
+        case 'a':          command = {command: 'move_to', motor: 'wrist',    position: motor_controller.motor_limits.wrist.min_pos}; break;
+        case 'd':          command = {command: 'move_to', motor: 'wrist',    position: motor_controller.motor_limits.wrist.max_pos}; break;
+        case 'q':          command = {command: 'move_to', motor: 'hand',     position: motor_controller.motor_limits.hand.min_pos}; break; // Toggle
+        case 'e':          command = {command: 'move_to', motor: 'thumb',    position: motor_controller.motor_limits.thumb.max_pos}; break; // Toggle
+        case ' ':          command = {command: 'stop_all'}; break;
+    }
+    if(command){
+        sendCommand(JSON.stringify(command)); // Convert to JSON string before sending
+    }
 
-    document.addEventListener('keyup', (event) => {
-        pressedKeys[event.key] = false;
-        currentCommandDisplay.innerText = `Current Command: None`;
+});
 
-        switch (event.key) {
-            case 'ArrowLeft':
-            case 'ArrowRight': sendCommand('stop_base'); break;
-            case 'ArrowUp':
-            case 'ArrowDown':  sendCommand('stop_shoulder'); break;
-            case 'w':
-            case 's':          sendCommand('stop_elbow'); break;
-            case 'a':
-            case 'd':          sendCommand('stop_wrist'); break;
-        }
-    });
+document.addEventListener('keyup', (event) => {
+    pressedKeys[event.key] = false;
+    currentCommandDisplay.innerText = `Current Command: None`;
+    let command = null;
+    switch (event.key) {
+        case 'ArrowLeft':
+        case 'ArrowRight': command = {command: 'stop', motor: 'base'}; break;
+        case 'ArrowUp':
+        case 'ArrowDown':  command = {command: 'stop', motor: 'shoulder'}; break;
+        case 'w':
+        case 's':          command = {command: 'stop', motor: 'elbow'}; break;
+        case 'a':
+        case 'd':          command = {command: 'stop', motor: 'wrist'}; break;
+        //q, e and space don't need to be handled.
+    }
+    if(command){
+        sendCommand(JSON.stringify(command));
+    }
+});
 
-        let gamepadIndex = null;
-
-    // --- Gamepad Connection Handling ---
+    // --- Gamepad Support ---
+    let gamepadIndex = null;
 
     window.addEventListener("gamepadconnected", (event) => {
         console.log("Gamepad connected:", event.gamepad);
         gamepadIndex = event.gamepad.index;
         document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
-        gameLoop(); // Start the game loop when a gamepad is connected
+        gameLoop(); // Start the game loop
     });
 
     window.addEventListener("gamepaddisconnected", (event) => {
@@ -201,82 +198,56 @@ document.getElementById('reconnectButton').addEventListener('click', () => { //I
         document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
     });
 
-    // --- Game Loop (for continuous input) ---
-
     function gameLoop() {
-        if (gamepadIndex !== null) {
-            const gamepad = navigator.getGamepads()[gamepadIndex];
+    if (gamepadIndex !== null) {
+        const gamepad = navigator.getGamepads()[gamepadIndex];
+        if (gamepad) {
+            // Left Joystick (Base and Shoulder)
+            const leftX = gamepad.axes[0];
+            const leftY = gamepad.axes[1];
 
-            if (gamepad) { // Check if gamepad is still valid
-                // --- Left Joystick (Base and Shoulder) ---
-                const leftX = gamepad.axes[0];
-                const leftY = gamepad.axes[1];
+            if (Math.abs(leftX) > 0.1) {
+                sendCommand(JSON.stringify({command: 'move_to', motor: 'base', position: leftX > 0 ? motor_controller.motor_limits.base.max_pos: motor_controller.motor_limits.base.min_pos}));
+            } else {
+                sendCommand(JSON.stringify({command: 'stop', motor: 'base'}));
+            }
 
-                if (Math.abs(leftX) > 0.1) { // Deadzone
-                    if (leftX > 0) {
-                        sendCommand('move_base_right');
-                    } else {
-                        sendCommand('move_base_left');
-                    }
-                } else {
-                    sendCommand('stop_base')
-                }
+            if (Math.abs(leftY) > 0.1) {
+                sendCommand(JSON.stringify({command: 'move_to', motor: 'shoulder', position: leftY > 0 ? motor_controller.motor_limits.shoulder.max_pos: motor_controller.motor_limits.shoulder.min_pos}));
+            } else {
+                sendCommand(JSON.stringify({command: 'stop', motor: 'shoulder'}));
+            }
 
-                if (Math.abs(leftY) > 0.1) {
-                    if (leftY > 0) {
-                         sendCommand('move_shoulder_down');
-                    } else {
-                        sendCommand('move_shoulder_up');
-                    }
-                } else {
-                    sendCommand('stop_shoulder')
-                }
-                // --- Right Joystick (Elbow and wrist) ---
-                const rightY = gamepad.axes[4];
-                const rightX = gamepad.axes[3];
+            // Right Joystick (Elbow and Wrist)
+            const rightX = gamepad.axes[3];
+            const rightY = gamepad.axes[4];
 
-                if(Math.abs(rightY) > 0.1){
-                    if(rightY > 0){
-                        sendCommand('move_elbow_down');
-                    } else {
-                        sendCommand('move_elbow_up');
-                    }
-                } else {
-                    sendCommand('stop_elbow');
-                }
+            if (Math.abs(rightX) > 0.1) {
+                sendCommand(JSON.stringify({command: 'move_to', motor: 'wrist', position: rightX > 0 ? motor_controller.motor_limits.wrist.max_pos: motor_controller.motor_limits.wrist.min_pos}));
+            } else {
+                sendCommand(JSON.stringify({command: 'stop', motor: 'wrist'}));
+            }
 
-                if(Math.abs(rightX) > 0.1){
-                    if(rightX > 0){
-                        sendCommand('move_wrist_right');
-                    } else {
-                        sendCommand('move_wrist_left');
-                    }
-                } else {
-                     sendCommand('stop_wrist');
-                }
+            if (Math.abs(rightY) > 0.1) {
+                sendCommand(JSON.stringify({command: 'move_to', motor: 'elbow', position: rightY > 0 ? motor_controller.motor_limits.elbow.max_pos : motor_controller.motor_limits.elbow.min_pos}));
+            } else {
+                sendCommand(JSON.stringify({command: 'stop', motor: 'elbow'}));
+            }
 
-                // --- Triggers ---
-                const leftTrigger = gamepad.buttons[6].value;   //Left trigger
-                const rightTrigger = gamepad.buttons[7].value;  //Right trigger
+            // Triggers (Hand and Thumb)
+            const leftTrigger = gamepad.buttons[6].value;
+            const rightTrigger = gamepad.buttons[7].value;
 
-                if(leftTrigger > 0.2){
-                    sendCommand('move_hand');
-                } else {
-                    sendCommand('stop_hand')
-                }
-
-                if(rightTrigger > 0.2){
-                    sendCommand('move_thumb');
-                } else {
-                     sendCommand('stop_thumb')
-                }
-                // Add more button/axis handling here, as needed
-
+            if (leftTrigger > 0.2) {
+                sendCommand(JSON.stringify({command: 'move_to', motor: 'hand', position: motor_controller.motor_limits.hand.max_pos})); // Assuming max_pos is closed
+            }
+            if (rightTrigger > 0.2) {
+                 sendCommand(JSON.stringify({command: 'move_to', motor: 'thumb', position: motor_controller.motor_limits.thumb.max_pos})); // Assuming max_pos is closed
             }
         }
-
-        requestAnimationFrame(gameLoop); // Call gameLoop again on the next frame
     }
+    requestAnimationFrame(gameLoop);
+}
 
 </script>
 </body>
