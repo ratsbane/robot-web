@@ -4,12 +4,13 @@ import json
 # --- Add these lines at the VERY TOP ---
 import os
 import sys
+# Use the *correct* path to STservo_sdk here:
 sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
 if sdk_path not in sys.path:
     sys.path.insert(0, sdk_path)
+# --- End added lines ---
 
-from STservo_sdk import *
-
+from STservo_sdk import *  # Ensure this is the correct import
 
 # Constants
 CALIBRATION_SPEED = 300
@@ -21,9 +22,8 @@ INITIAL_MAX_POS = 3072
 THUMB_INITIAL_MIN = 2048
 THUMB_INITIAL_MAX = 2500
 CALIBRATION_FILE = "calibration.json"
-CALIBRATED_MOTORS = [1, 2, 3, 4, 6]  # Motors to calibrate, NO motor 5
+CALIBRATED_MOTORS = [1, 2, 3, 4, 5, 6]  # Include ALL motors now
 
-# --- (Rest of your arm_control.py code - MotorController, scan_interfaces, etc.) ---
 
 def scan_interfaces_for_arm():
     """Scan for SO-ARM100 robot arm connected via USB."""
@@ -51,8 +51,8 @@ class MotorController:
     def __init__(self, packet_handler):
         self.packet_handler = packet_handler
         self.last_positions = {}
-        self.wrist_direction = 1  # 1 for one direction, -1 for the opposite
-        self.thumb_direction = 1  # Same toggle mechanism
+        # self.wrist_direction = 1  # No longer needed
+        # self.thumb_direction = 1  # No longer needed
         self.motor_limits = {}  # Store calibrated min/max positions
         self.update_interval = MOVEMENT_UPDATE_INTERVAL
         # Initial motor definitions (used before calibration or if loading fails)
@@ -61,7 +61,7 @@ class MotorController:
             2: {"name": "shoulder", "min_pos": INITIAL_MIN_POS, "max_pos": INITIAL_MAX_POS},
             3: {"name": "elbow", "min_pos": INITIAL_MIN_POS, "max_pos": INITIAL_MAX_POS},
             4: {"name": "wrist", "min_pos": INITIAL_MIN_POS, "max_pos": INITIAL_MAX_POS},
-            5: {"name": "hand", "min_pos": 0, "max_pos": 4095},  # No calibration
+            5: {"name": "hand", "min_pos": 0, "max_pos": 4095},  # Now we calibrate.
             6: {"name": "thumb", "min_pos": THUMB_INITIAL_MIN, "max_pos": THUMB_INITIAL_MAX}
         }
 
@@ -95,7 +95,7 @@ class MotorController:
 
         # Move towards minimum
         self.move_to_limit(motor_id, -1)
-        min_pos = self.find_limit(motor_id)
+        min_pos = self.find_limit(motor_id, -1) # Pass direction
         if min_pos is not None:
             min_pos += CALIBRATION_BACKOFF
         else:
@@ -108,8 +108,8 @@ class MotorController:
         time.sleep(2)
 
         # Move towards maximum
-        self.move_to_limit(motor_id, 1)
-        max_pos = self.find_limit(motor_id)
+        self.move_to_limit(motor_id, 1) # Pass direction
+        max_pos = self.find_limit(motor_id, 1)  # Pass direction
         if max_pos is not None:
             max_pos -= CALIBRATION_BACKOFF
         else:
@@ -125,7 +125,7 @@ class MotorController:
         target_position = 0 if direction < 0 else 4095
         self.write_pos_ex(motor_id, target_position, CALIBRATION_SPEED, CALIBRATION_ACCELERATION)
 
-    def find_limit(self, motor_id, direction):
+    def find_limit(self, motor_id, direction):  # Add direction argument
         """Move motor until it stalls."""
         last_pos_result = self.packet_handler.ReadPos(motor_id)
         time.sleep(0.1)
@@ -148,28 +148,57 @@ class MotorController:
             current_pos = current_pos_result[0]
         return current_pos
 
+
     def move_motor(self, motor_id, motor_name, speed, direction):
         """Move motor and return status."""
+        print(f"move_motor called: motor_id={motor_id}, motor_name={motor_name}, speed={speed}, direction={direction}")
         if motor_id not in self.motor_limits:
+            print(f"  ERROR: Motor {motor_id} ({motor_name}) not calibrated!")
             return {"success": False, "message": f"Motor {motor_id} ({motor_name}) not calibrated!"}
 
         min_pos = self.motor_limits[motor_id]["min"]
         max_pos = self.motor_limits[motor_id]["max"]
+        print(f"  min_pos: {min_pos}, max_pos: {max_pos}")
 
         current_pos_result = self.packet_handler.ReadPos(motor_id)
+        print(f"  ReadPos result: {current_pos_result}")
         if current_pos_result is None:
+            print(f"  ERROR: ReadPos failed for motor {motor_id}.")
             return {"success": False, "message": f"ReadPos failed for motor {motor_id}."}
 
-        current_pos = current_pos_result[0]
-        delta_position = int(speed * direction * self.update_interval)
-        new_position = current_pos + delta_position
-        new_position = max(min_pos, min(max_pos, new_position))
+        start_pos = current_pos_result[0]
+        print(f"  start_pos: {start_pos}")
 
+        delta_position = int(speed * direction * self.update_interval)
+        new_position = start_pos + delta_position
+        new_position = max(min_pos, min(max_pos, new_position))
+        print(f"  delta_position: {delta_position}, new_position: {new_position}")
+
+        start_time = time.time()  # Record start time
         result, error = self.packet_handler.WritePosEx(motor_id, new_position, speed, 50)
+        end_time = time.time()  # Record end time
+
+
+        print(f"  WritePosEx result: {result}, error: {error}")
         if result != COMM_SUCCESS or error != 0:
+            print(f"  ERROR: Failed to move {motor_name} (Motor {motor_id}) to position {new_position}")
             return {"success": False, "message": f"Failed to move {motor_name} (Motor {motor_id}) to position {new_position}"}
 
-        return {"success": True, "message": f"Moved {motor_name} to {new_position}"}
+        # Get temperature (replace with actual SDK call if available)
+        temp_result, _, _ = self.packet_handler.ReadTemperature(motor_id)
+        temperature = temp_result if temp_result is not None else -1  # Use -1 as a placeholder for "unknown"
+
+        # Calculate and format duration
+        duration_ms = round((end_time - start_time) * 1000, 1)  # Convert to milliseconds and round
+
+        return {
+            "success": True,
+            "start_position": start_pos,
+            "end_position": new_position,
+            "duration": duration_ms,  # Return milliseconds
+            "temp": temperature,
+            "message": f"Moved {motor_name} to {new_position}"
+        }
 
 
     def write_pos_ex(self, motor_id, position, speed, acc):
@@ -177,14 +206,6 @@ class MotorController:
         result, error = self.packet_handler.WritePosEx(motor_id, position, speed, acc)
         if result != COMM_SUCCESS or error != 0:
             print(f"Failed to move Motor {motor_id} to position {position}")
-
-    def toggle_wrist_direction(self):
-        """Toggle wrist direction."""
-        self.wrist_direction *= -1
-
-    def toggle_thumb_direction(self):
-        """Toggle thumb direction."""
-        self.thumb_direction *= -1
 
     def load_calibration(self):
         """Loads calibration data."""
@@ -206,5 +227,4 @@ class MotorController:
         with open(CALIBRATION_FILE, "w") as f:
             json.dump(self.motor_limits, f, indent=4)
         print("Calibration data saved.")
-
 
