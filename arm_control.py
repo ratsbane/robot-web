@@ -201,6 +201,54 @@ class MotorController:
         }
 
 
+    def move_motor_to_position(self, motor_id, motor_name, position, speed=500): #Add a default value.
+        """Move motor to a specific position and return status."""
+        print(f"move_motor_to_position called: motor_id={motor_id}, motor_name={motor_name}, position={position}, speed={speed}")
+        if motor_id not in self.motor_limits:
+            print(f"  ERROR: Motor {motor_id} ({motor_name}) not calibrated!")
+            return {"success": False, "message": f"Motor {motor_id} ({motor_name}) not calibrated!"}
+
+        min_pos = self.motor_limits[motor_id]["min"]
+        max_pos = self.motor_limits[motor_id]["max"]
+        print(f"  min_pos: {min_pos}, max_pos: {max_pos}")
+
+        #Bound the position
+        position = max(min_pos, min(max_pos, int(position)))
+
+        current_pos_result = self.packet_handler.ReadPos(motor_id)
+        print(f"  ReadPos result: {current_pos_result}")
+        if current_pos_result is None:
+            print(f"  ERROR: ReadPos failed for motor {motor_id}.")
+            return {"success": False, "message": f"ReadPos failed for motor {motor_id}."}
+
+        start_pos = current_pos_result[0]
+        print(f"  start_pos: {start_pos}")
+
+        start_time = time.time()
+        result, error = self.packet_handler.WritePosEx(motor_id, position, speed, 50)
+        end_time = time.time()
+
+        print(f"  WritePosEx result: {result}, error: {error}")
+        if result != COMM_SUCCESS or error != 0:
+            print(f"  ERROR: Failed to move {motor_name} (Motor {motor_id}) to position {position}")
+            return {"success": False, "message": f"Failed to move {motor_name} (Motor {motor_id}) to position {position}"}
+
+        # Get temperature (replace with actual SDK call if available)
+        temp_result, _, _ = self.packet_handler.ReadTemperature(motor_id)
+        temperature = temp_result if temp_result is not None else -1
+
+        duration_ms = round((end_time - start_time) * 1000, 1)  # Convert to milliseconds and round
+
+        return {
+            "success": True,
+            "start_position": start_pos,
+            "end_position": position,
+            "duration": duration_ms,
+            "temp": temperature,
+            "message": f"Moved {motor_name} to {position}"
+        }
+
+
     def write_pos_ex(self, motor_id, position, speed, acc):
         """Wrapper for WritePosEx."""
         result, error = self.packet_handler.WritePosEx(motor_id, position, speed, acc)
