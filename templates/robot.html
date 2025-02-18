@@ -26,7 +26,6 @@
             font-weight: bold;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
 </head>
 <body>
     <div id="video-container">
@@ -66,46 +65,56 @@
     let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
     let reconnectTimeout;
 
-    function connectSocket() {
-        socket = new WebSocket("ws://robot:5000/ws");
+function connectSocket() {
+    socket = new WebSocket("ws://robot:5000/ws"); // CORRECT URL
 
-        socket.onopen = () => {
-            document.getElementById('status').innerText = 'Connected';
-            socketReady = true;
-            errorDisplay.innerText = ''; // Clear errors on successful connection
-            reconnectInterval = 1000; // Reset reconnect interval on successful connection
-            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
-        };
+    socket.onopen = () => {
+        document.getElementById('status').innerText = 'Connected';
+        socketReady = true;
+        errorDisplay.innerText = ''; // Clear errors
+        reconnectInterval = 1000; // Reset interval
+        clearTimeout(reconnectTimeout); // Clear timeout
+    };
 
-        socket.onmessage = (event) => {
-            document.getElementById('messages').innerText = event.data;
-            addToCommandHistory("Received: " + event.data);
-        };
+    socket.onmessage = (event) => {
+        document.getElementById('messages').innerText = event.data;
+        addToCommandHistory("Received: " + event.data);
+    };
 
-        socket.onclose = (event) => {
-            document.getElementById('status').innerText = 'Disconnected';
-            socketReady = false;
-            console.log('WebSocket closed:', event);
-            scheduleReconnect(); // Attempt to reconnect
-        };
+    socket.onclose = (event) => {
+        document.getElementById('status').innerText = 'Disconnected';
+        socketReady = false;
+        console.log('WebSocket closed:', event);
+        scheduleReconnect(); // Reconnect on close
+    };
 
-        socket.onerror = (error) => {
-            errorDisplay.innerText = 'WebSocket Error: ' + error;
-            console.error('WebSocket error:', error);
-            //  socketReady = false; // Don't set here- onclose will handle.
-            //  scheduleReconnect(); // Don't call here - onclose handles it.
+    socket.onerror = (error) => {
+        errorDisplay.innerText = 'WebSocket Error: ' + error;
+        console.error('WebSocket error:', error);
+    };
+}
 
-        };
+function scheduleReconnect() {
+    if (!socketReady) {
+        reconnectTimeout = setTimeout(() => {
+            console.log(`Attempting to reconnect...`);
+            connectSocket();
+            reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval);
+        }, reconnectInterval);
     }
-    function scheduleReconnect() {
-        if (!socketReady) { // Only attempt reconnect if not already connected/connecting
-            reconnectTimeout = setTimeout(() => {
-                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
-                connectSocket();
-                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
-            }, reconnectInterval);
-        }
+}
+
+connectSocket(); // Initial connection
+
+document.getElementById('reconnectButton').addEventListener('click', () => { //In HTML!
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
     }
+    scheduleReconnect();
+});
+
+
+
 
     connectSocket(); // Initial connection
 
@@ -153,8 +162,8 @@
             case 's':          sendCommand('move_elbow_down'); break;
             case 'a':          sendCommand('move_wrist_left'); break;
             case 'd':          sendCommand('move_wrist_right'); break;
-            case 'q':          sendCommand('move_hand'); break;
-            case 'e':          sendCommand('move_thumb'); break;
+            case 'q':          sendCommand('move_hand'); break; // Toggle hand
+            case 'e':          sendCommand('move_thumb'); break; // Toggle thumb
             case ' ':          sendCommand('stop_all'); break;
         }
     });
@@ -174,6 +183,7 @@
             case 'd':          sendCommand('stop_wrist'); break;
         }
     });
+
         let gamepadIndex = null;
 
     // --- Gamepad Connection Handling ---
@@ -258,7 +268,7 @@
                 if(rightTrigger > 0.2){
                     sendCommand('move_thumb');
                 } else {
-                    sendCommand('stop_thumb')
+                     sendCommand('stop_thumb')
                 }
                 // Add more button/axis handling here, as needed
 

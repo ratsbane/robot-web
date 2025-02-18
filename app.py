@@ -5,20 +5,20 @@ import cv2
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 import asyncio
-# --- Corrected Path ---
-sdk_path = os.path.abspath('/home/pi/so-arm-configure/')  # Corrected path
-if sdk_path not in sys.path:
-    sys.path.insert(0, sdk_path)
-# --- End Path Correction ---
-
 from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, sts, CALIBRATED_MOTORS
-import multiprocessing  # For the Event
-import signal  # For signal handling
 
 # --- Set working directory and sys.path ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(current_dir)
 sys.path.insert(0, current_dir)
+
+# --- Add STServo Path ---
+sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
+if sdk_path not in sys.path:
+    sys.path.insert(0, sdk_path)
+# --- End added lines ---
+
+from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, sts, CALIBRATED_MOTORS
 
 # --- Flask App Initialization ---  <-- Note: It's FastAPI now!
 app = FastAPI()
@@ -55,36 +55,61 @@ else:
         port_handler.closePort()
 
 # --- Camera Setup ---
-camera = cv2.VideoCapture(0)  # Use the correct index!
-if not camera.isOpened():
-    print("Error: Could not open camera")
-    camera = None
+camera = None  # Initialize to None
 
-# --- Shutdown Event ---
-shutdown_event = multiprocessing.Event()
+@app.on_event("startup")
+async def startup_event():
+    global camera
+    print("Initializing camera...")
+    camera = cv2.VideoCapture(0)  # Use the correct index!
+    if not camera.isOpened():
+        print("Error: Could not open camera")
+        camera = None  # Ensure camera is None if opening fails
+    else:
+        print("Camera initialized successfully")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global camera
+    print("Shutting down...")
+    if camera:
+        camera.release()
+        print("Camera released")
 
 async def generate_frames():
-    while not shutdown_event.is_set():  # Check for shutdown signal
+    while True:
         if camera:
-            success, frame = camera.read()
-            if not success:
-                await asyncio.sleep(0.1)
-                continue
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
-            if not ret:
-                await asyncio.sleep(0.1)
-                continue
-            frame = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            try:
+                success, frame = camera.read()
+                if not success:
+                    print("Camera Read Failed")
+                    await asyncio.sleep(0.1)
+                    continue
+
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+                if not ret:
+                    print("Encoding failed.")
+                    await asyncio.sleep(0.1)
+                    continue
+
+                frame = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                # This is expected when the client disconnects.  Exit gracefully.
+                print(f"Client disconnected (BrokenPipe/ConnectionReset/OSError): {e}")
+                break
+            except Exception as e:
+                print(f"Unexpected error in generate_frames: {e}")
+                await asyncio.sleep(1)
+                yield (b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
+
         else:
             await asyncio.sleep(1)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
-    print("generate_frames exiting.") # Debug print
-    if camera:
-        camera.release()
-        print ("Camera released")
+    print("generate_frames exiting.")
 
 
 @app.get("/")
@@ -131,7 +156,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("Client connected (FastAPI WebSocket)")
     try:
-        while not shutdown_event.is_set(): #Also check here.
+        while True:
             data = await websocket.receive_text()
             print(f"Received command (FastAPI): {data}")
 
@@ -147,15 +172,4 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"WebSocket error in handle_command: {e}")
 
-def shutdown():
-    print("Shutting down...")
-    shutdown_event.set()  # Signal the shutdown event
-    if camera:
-        camera.release()
-    sys.exit(0) # Exit
 
-# --- Signal Handler for Ctrl+C ---
-def signal_handler(sig, frame):
-    shutdown()
-
-signal.signal(signal.SIGINT, signal_handler) #Register the signal handler

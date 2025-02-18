@@ -4,7 +4,7 @@ import json
 # --- Add these lines at the VERY TOP ---
 import os
 import sys
-sdk_path = os.path.abspath('/home/pi/so-arm-configure/STservo_sdk')
+sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
 if sdk_path not in sys.path:
     sys.path.insert(0, sdk_path)
 
