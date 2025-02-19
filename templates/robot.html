@@ -78,7 +78,6 @@
         };
 
         socket.onmessage = (event) => {
-            //No change here: We are receiving a JSON string.
             document.getElementById('messages').innerText = event.data;
             addToCommandHistory("Received: " + event.data);
         };
@@ -117,12 +116,12 @@
 
     const pressedKeys = {}; // Keep track of pressed keys
 
-    function sendCommand(command) {
+     function sendCommand(command) {
         if (socketReady) {
             console.log("Sending command:", command);
-            socket.send(command); //SEND THE JSON STRING
-            currentCommandDisplay.innerText = `Current Command: ${command}`;
-            addToCommandHistory("Sent: " + command); // Add to history
+            socket.send(JSON.stringify(command)); //SEND THE JSON STRING
+            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
+            addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
         } else {
             errorDisplay.innerText = "Cannot send command: Socket not connected.";
             console.log("Socket not ready, cannot send command:", command); // Log to console
@@ -142,43 +141,45 @@
     }
     pressedKeys[event.key] = true;
 
-    let command = null; // Store the command as an object
+    let command = null;
     switch (event.key) {
-        case 'ArrowLeft':  command = {command: 'move_to', motor: 'base',   position: motor_controller.motor_limits.base.min_pos}; break; //Use min and max.
-        case 'ArrowRight': command = {command: 'move_to', motor: 'base',   position: motor_controller.motor_limits.base.max_pos}; break;
-        case 'ArrowUp':    command = {command: 'move_to', motor: 'shoulder', position: motor_controller.motor_limits.shoulder.min_pos}; break;
-        case 'ArrowDown':  command = {command: 'move_to', motor: 'shoulder', position: motor_controller.motor_limits.shoulder.max_pos}; break;
-        case 'w':          command = {command: 'move_to', motor: 'elbow',    position: motor_controller.motor_limits.elbow.min_pos}; break;
-        case 's':          command = {command: 'move_to', motor: 'elbow',    position: motor_controller.motor_limits.elbow.max_pos}; break;
-        case 'a':          command = {command: 'move_to', motor: 'wrist',    position: motor_controller.motor_limits.wrist.min_pos}; break;
-        case 'd':          command = {command: 'move_to', motor: 'wrist',    position: motor_controller.motor_limits.wrist.max_pos}; break;
-        case 'q':          command = {command: 'move_to', motor: 'hand',     position: motor_controller.motor_limits.hand.min_pos}; break; // Toggle
-        case 'e':          command = {command: 'move_to', motor: 'thumb',    position: motor_controller.motor_limits.thumb.max_pos}; break; // Toggle
-        case ' ':          command = {command: 'stop_all'}; break;
+        case 'ArrowLeft':  command = { command: 'move', motor: 'base', direction: 'left' }; break;
+        case 'ArrowRight': command = { command: 'move', motor: 'base', direction: 'right' }; break;
+        case 'ArrowUp':    command = { command: 'move', motor: 'shoulder', direction: 'up' }; break;
+        case 'ArrowDown':  command = { command: 'move', motor: 'shoulder', direction: 'down' }; break;
+        case 'w':          command = { command: 'move', motor: 'elbow', direction: 'up' }; break;
+        case 's':          command = { command: 'move', motor: 'elbow', direction: 'down' }; break;
+        case 'a':          command = { command: 'move', motor: 'wrist', direction: 'left' }; break;
+        case 'd':          command = { command: 'move', motor: 'wrist', direction: 'right' }; break;
+        case 'q':          command = { command: 'move', motor: 'hand', direction: 'up' }; break; //  Move up/down
+        case 'e':          command = { command: 'move', motor: 'thumb', direction: 'down' }; break; //  Move up/down
+        case ' ':          command = { command: 'stop_all' }; break;
     }
-    if(command){
-        sendCommand(JSON.stringify(command)); // Convert to JSON string before sending
+    if (command) {
+        sendCommand(command); // Send the JSON object
     }
-
 });
 
 document.addEventListener('keyup', (event) => {
     pressedKeys[event.key] = false;
     currentCommandDisplay.innerText = `Current Command: None`;
     let command = null;
+
     switch (event.key) {
         case 'ArrowLeft':
-        case 'ArrowRight': command = {command: 'stop', motor: 'base'}; break;
+        case 'ArrowRight': command = { command: 'stop', motor: 'base' }; break;
         case 'ArrowUp':
-        case 'ArrowDown':  command = {command: 'stop', motor: 'shoulder'}; break;
+        case 'ArrowDown':  command = { command: 'stop', motor: 'shoulder' }; break;
         case 'w':
-        case 's':          command = {command: 'stop', motor: 'elbow'}; break;
+        case 's':          command = { command: 'stop', motor: 'elbow' }; break;
         case 'a':
-        case 'd':          command = {command: 'stop', motor: 'wrist'}; break;
-        //q, e and space don't need to be handled.
+        case 'd':          command = { command: 'stop', motor: 'wrist' }; break;
+        case 'q':          command = { command: 'stop', motor: 'hand' }; break; //Stop hand.
+        case 'e':          command = { command: 'stop', motor: 'thumb' }; break; //Stop thumb
+
     }
-    if(command){
-        sendCommand(JSON.stringify(command));
+    if (command) {
+        sendCommand(command); // Send the JSON object
     }
 });
 
@@ -199,55 +200,59 @@ document.addEventListener('keyup', (event) => {
     });
 
     function gameLoop() {
-    if (gamepadIndex !== null) {
-        const gamepad = navigator.getGamepads()[gamepadIndex];
-        if (gamepad) {
-            // Left Joystick (Base and Shoulder)
-            const leftX = gamepad.axes[0];
-            const leftY = gamepad.axes[1];
+        if (gamepadIndex !== null) {
+            const gamepad = navigator.getGamepads()[gamepadIndex];
+            if (gamepad) {
+                // Left Joystick (Base and Shoulder)
+                const leftX = gamepad.axes[0];
+                const leftY = gamepad.axes[1];
 
-            if (Math.abs(leftX) > 0.1) {
-                sendCommand(JSON.stringify({command: 'move_to', motor: 'base', position: leftX > 0 ? motor_controller.motor_limits.base.max_pos: motor_controller.motor_limits.base.min_pos}));
-            } else {
-                sendCommand(JSON.stringify({command: 'stop', motor: 'base'}));
-            }
+                if (Math.abs(leftX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'base', direction: leftX > 0 ? 'right' : 'left'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'base'});
+                }
 
-            if (Math.abs(leftY) > 0.1) {
-                sendCommand(JSON.stringify({command: 'move_to', motor: 'shoulder', position: leftY > 0 ? motor_controller.motor_limits.shoulder.max_pos: motor_controller.motor_limits.shoulder.min_pos}));
-            } else {
-                sendCommand(JSON.stringify({command: 'stop', motor: 'shoulder'}));
-            }
+                if (Math.abs(leftY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'shoulder', direction: leftY > 0 ? 'down' : 'up'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'shoulder'});
+                }
 
-            // Right Joystick (Elbow and Wrist)
-            const rightX = gamepad.axes[3];
-            const rightY = gamepad.axes[4];
+                // Right Joystick (Elbow and Wrist)
+                const rightX = gamepad.axes[3];
+                const rightY = gamepad.axes[4];
 
-            if (Math.abs(rightX) > 0.1) {
-                sendCommand(JSON.stringify({command: 'move_to', motor: 'wrist', position: rightX > 0 ? motor_controller.motor_limits.wrist.max_pos: motor_controller.motor_limits.wrist.min_pos}));
-            } else {
-                sendCommand(JSON.stringify({command: 'stop', motor: 'wrist'}));
-            }
+                if (Math.abs(rightX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'wrist', direction: rightX > 0 ? 'right' : 'left'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'wrist'});
+                }
 
-            if (Math.abs(rightY) > 0.1) {
-                sendCommand(JSON.stringify({command: 'move_to', motor: 'elbow', position: rightY > 0 ? motor_controller.motor_limits.elbow.max_pos : motor_controller.motor_limits.elbow.min_pos}));
-            } else {
-                sendCommand(JSON.stringify({command: 'stop', motor: 'elbow'}));
-            }
+                if (Math.abs(rightY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'elbow', direction: rightY > 0 ? 'down' : 'up'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'elbow'});
+                }
 
-            // Triggers (Hand and Thumb)
-            const leftTrigger = gamepad.buttons[6].value;
-            const rightTrigger = gamepad.buttons[7].value;
+                // Triggers (Hand and Thumb)
+                const leftTrigger = gamepad.buttons[6].value;
+                const rightTrigger = gamepad.buttons[7].value;
 
-            if (leftTrigger > 0.2) {
-                sendCommand(JSON.stringify({command: 'move_to', motor: 'hand', position: motor_controller.motor_limits.hand.max_pos})); // Assuming max_pos is closed
-            }
-            if (rightTrigger > 0.2) {
-                 sendCommand(JSON.stringify({command: 'move_to', motor: 'thumb', position: motor_controller.motor_limits.thumb.max_pos})); // Assuming max_pos is closed
+                if (leftTrigger > 0.2) {
+                    sendCommand({command: 'move', motor: 'hand', direction: 'down'}); // Assuming max_pos is closed
+                } else {
+                    sendCommand({command: 'stop', motor: 'hand'});
+                }
+                if (rightTrigger > 0.2) {
+                     sendCommand({command: 'move', motor: 'thumb', direction: 'down'}); // Assuming max_pos is closed
+                } else {
+                    sendCommand({command: 'stop', motor: 'thumb'});
+                }
             }
         }
+        requestAnimationFrame(gameLoop);
     }
-    requestAnimationFrame(gameLoop);
-}
 
 </script>
 </body>

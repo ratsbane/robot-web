@@ -43,7 +43,14 @@ async def generate_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + b'' + b'\r\n')
 
+
 @app.get("/")
+async def read_root():
+    with open("templates/robot.html", "r") as f:
+        html_content = f.read()
+    return HTMLResponse(content=html_content, status_code=200)
+
+@app.get("/simple")
 async def read_root():
     #with open("templates/robot.html", "r") as f:
     with open("templates/video_feed.html", "r") as f:
