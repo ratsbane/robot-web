@@ -1,12 +1,11 @@
 import socket
 import time
+# --- Add these lines at the VERY TOP ---
 import os
 import sys
 import json
-import threading
+import threading  # IMPORT THREADING
 
-
-# --- Add these lines at the VERY TOP ---
 # Use the *correct* path to STservo_sdk here:
 sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
 if sdk_path not in sys.path:
@@ -19,12 +18,15 @@ from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, s
 device = scan_interfaces_for_arm()
 if not device:
     print("No SO-ARM100 controller found. Exiting.")
-    exit()
+    exit() #Exit if no arm is connected.
 
 port_handler = PortHandler(device)
 packet_handler = sts(port_handler)
-if not port_handler.openPort() or not port_handler.setBaudRate(1000000):
-    print(f"Failed to connect to robot arm.")
+if not port_handler.openPort():
+    print(f"Failed to open port {device}")
+    exit()
+if not port_handler.setBaudRate(1000000):
+    print(f"Failed to set baud rate for {device}")
     exit()
 
 motor_controller = MotorController(packet_handler)
@@ -43,117 +45,144 @@ for motor_id in CALIBRATED_MOTORS:
 time.sleep(3)
 
 # --- TCP Socket Server ---
-HOST = 'localhost'
-PORT = 9000
-DEFAULT_SPEED = 500  # Default speed if not specified in the command
+HOST = 'localhost'  # Listen on localhost (only accessible from the same machine)
+PORT = 9000        # Choose a port (make sure it's not used by anything else)
+DEFAULT_SPEED = 500 # Define default speed.
+
+# --- Command Queue ---
+command_queue = [] # List for commands  # Use a list as a simple queue
+current_moving_motor = None  # Keep track of the currently moving motor
 
 def handle_client(conn, addr):
-    print(f"[{time.time()}] Connected by {addr}")
+    print(f"[{time.time()}] Connected by {addr}")  # Timestamp
     with conn:
         while True:
             try:
                 print(f"[{time.time()}] Waiting to receive data...")
-                data = conn.recv(1024)
+                data = conn.recv(1024)  # Receive data from the client
                 print(f"[{time.time()}] Data received: {data}")
                 if not data:
                     print(f"[{time.time()}] No data received. Breaking.")
-                    break
-
-                # --- Parse JSON Command ---
+                    break  # Client disconnected
                 try:
-                    command_json = data.decode('utf-8').strip()
-                    command = json.loads(command_json)  # Parse the JSON
-                except json.JSONDecodeError:
-                    print(f"[{time.time()}] Error: Invalid JSON received.")
-                    conn.sendall(b'{"success": false, "message": "Invalid JSON"}')
+                    command = json.loads(data.decode('utf-8').strip()) #Expect a JSON
+                except:
+                    conn.sendall(b"Error: Invalid JSON format")
                     continue
-
                 print(f"[{time.time()}] Received command: {command}")
 
-                result = None
-                if command.get('command') == 'move_to':
-                    motor_name = command.get('motor')
-                    position = command.get('position')
-                    speed = command.get('speed', DEFAULT_SPEED)  # Get speed, default if missing
-
-                    motor_id = None
-                    for m_id, m_data in motor_controller.motor_limits.items():
-                        if m_data['name'] == motor_name:
-                            motor_id = m_id
-                            break
-                    if motor_id is None:
-                        for m_id, m_data in motor_controller.initial_motor_data.items():
-                            if m_data['name'] == motor_name:
-                                motor_id = m_id
-                                break
-
-                    if motor_id is None:
-                        result = {'success': False, 'message': f'Unknown motor: {motor_name}'}
-                    elif isinstance(position, int): #Check that position is valid
-                        result = motor_controller.move_motor_to_position(motor_id, motor_name, position, speed)
-                    else: #position invalid
-                        result = {'success': False, 'message': f'Invalid position: {position}'}
-
-                elif command.get('command') == 'stop':
-                    motor_name = command.get('motor')
-                    motor_id = None
-                    for m_id, m_data in motor_controller.motor_limits.items():
-                        if m_data['name'] == motor_name:
-                            motor_id = m_id
-                            break
-                    if motor_id is None:
-                        for m_id, m_data in motor_controller.initial_motor_data.items():
-                            if m_data['name'] == motor_name:
-                                motor_id = m_id
-                                break
-                    if motor_id is not None:
-                        result = motor_controller.move_motor(motor_id, motor_name, 0, 0)  # Stop
-                    else:
-                        result = {'success': False, 'message': f'Unknown motor to stop: {motor_name}'}
-
-                elif command.get('command') == 'stop_all':
-                    result = {'success':True, 'message': "All motors stopped"}
-                    for motor_id in CALIBRATED_MOTORS:
-                        motor_name = motor_controller.initial_motor_data[motor_id]['name']
-                        motor_result = motor_controller.move_motor(motor_id, motor_name, 0, 0)
-                        if not motor_result['success']:
-                            result = motor_result #Return error.
-                            break # Stop on first error.
-
-                else:
-                    result = {'success': False, 'message': f'Unknown command: {command.get("command")}'}
-
-                # --- Send Response ---
-                if result:
-                    response_json = json.dumps(result)
-                    print(f"[{time.time()}] Sending response: {response_json}")
-                    conn.sendall(response_json.encode('utf-8'))
-                else:
-                    conn.sendall(b'{"success": false, "message": "Unknown error"}')  # Always send JSON
-
+                command_queue.append(command) #Put command on the queue.
+                result = {"success":True, "message": "Command received"} #Always send a JSON repsonse
+                conn.sendall(json.dumps(result).encode('utf-8'))
 
             except ConnectionResetError:
                 print(f"[{time.time()}] Client disconnected unexpectedly")
                 break
             except Exception as e:
                 print(f"[{time.time()}] Error handling client: {e}")
-                conn.sendall(json.dumps({'success': False, 'message': str(e)}).encode('utf-8'))  # Send error as JSON
+                conn.sendall(f"Error: {e}".encode('utf-8')) # Send the error to the client!
                 break
 
+def process_commands():
+    """Processes commands from the queue."""
+    global current_moving_motor, command_queue  # Access the global variables
+
+    while True:
+        if len(command_queue) > 0 and current_moving_motor is None:
+            # Get the next command from the queue
+            command = command_queue.pop(0) # Get the next command
+            print(f"[{time.time()}] Processing command: {command}")
+
+            result = None
+            motor_name = command.get('motor')  # Get motor name
+            motor_id = None
+
+            # Find Motor ID (outside the if/elif blocks)
+            if motor_name:
+                for m_id, m_data in motor_controller.motor_limits.items():
+                    if m_data['name'] == motor_name:
+                        motor_id = m_id
+                        break
+                if motor_id is None:
+                    for m_id, m_data in motor_controller.initial_motor_data.items():
+                        if m_data['name'] == motor_name:
+                            motor_id = m_id
+                            break
+
+            if command.get('command') == 'move_to':  # Absolute positioning
+                position = command.get('position')
+                speed = command.get('speed', DEFAULT_SPEED) # Get speed, use default.
+                if motor_id is not None and isinstance(position, int):
+                    result = motor_controller.move_motor_to_position(motor_id, motor_name, position, speed)
+                    if result['success']:
+                        current_moving_motor = motor_id  # Track moving motor
+                else:
+                    result = {'success': False, 'message': f'Invalid move_to command or unknown motor: {motor_name}'}
+
+            elif command.get('command') == 'move':  # Continuous movement
+                direction_str = command.get('direction')
+                speed = command.get('speed', DEFAULT_SPEED)
+                if motor_id is not None and direction_str in ('up', 'down', 'left', 'right'):
+                    if direction_str == 'left' or direction_str == 'up':
+                        direction = -1
+                    else: # 'right' or 'down'
+                        direction = 1
+                    result = motor_controller.move_motor(motor_id, motor_name, speed, direction)  # Use move_motor for continuous
+                    if result['success']:
+                        current_moving_motor = motor_id #Track currently-moving motor.
+                else:
+                    result = {'success': False, 'message': f'Invalid move command or unknown motor: {motor_name}'}
+
+            elif command.get('command') == 'stop':
+                if motor_id is not None:
+                    result = motor_controller.move_motor(motor_id, motor_name, 0, 0)  # Stop instantly
+                    current_moving_motor = None # Clear
+                else:
+                    result = {'success': False, 'message': f'Unknown motor to stop: {motor_name}'}
+
+            elif command.get('command') == 'stop_all':
+                result = {'success':True, 'message': "All motors stopped"}
+                for motor_id in CALIBRATED_MOTORS:
+                    motor_name = motor_controller.initial_motor_data[motor_id]['name']
+                    motor_result = motor_controller.move_motor(motor_id, motor_name, 0, 0) #Stop.
+                    if not motor_result['success']:
+                        result = motor_result #Return the error
+                        break # Stop on first error.
+                current_moving_motor = None
+
+            else:
+                result = {'success': False, 'message': f'Unknown command: {command.get("command")}'}
+
+
+        elif current_moving_motor is not None:
+            # Check if current motor is done. Not needed with continuous move.
+            pass
+
+        else:
+            # No command, no motor moving. Wait.
+            time.sleep(0.05)
+
 def main():
+    # Start the command processing thread
+    command_thread = threading.Thread(target=process_commands, daemon=True)
+    command_thread.start()
+
     try: #Wrap in try/finally to ensure closure.
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # ADD THIS LINE
             s.bind((HOST, PORT))
             s.listen()
             print(f"Robot Control Service listening on {HOST}:{PORT}")
             while True:
-                conn, addr = s.accept()
+                conn, addr = s.accept()  # Accept a connection
+                # Start a new thread to handle each client connection
                 client_thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
                 client_thread.start()
     finally:
         if port_handler:
             print("Closing port handler...")
-            port_handler.closePort()
+            port_handler.closePort() #Close the port when the service exits
+
 
 if __name__ == '__main__':
     main()
