@@ -44,8 +44,8 @@
                 <li><strong>Shoulder:</strong> Up/Down Arrows</li>
                 <li><strong>Elbow:</strong> W/S</li>
                 <li><strong>Wrist:</strong> A/D</li>
-                <li><strong>Hand:</strong> Q (toggle)</li>
-                <li><strong>Thumb:</strong> E (toggle)</li>
+                <li><strong>Hand:</strong> Y/H</li>
+                <li><strong>Thumb:</strong> T/G</li>
                 <li><strong>Stop All:</strong> Spacebar</li>
             </ul>
         </div>
@@ -135,34 +135,48 @@
         commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
     }
 
+
+
     document.addEventListener('keydown', (event) => {
-    if (pressedKeys[event.key]) {
-        return; // Key already pressed
-    }
-    pressedKeys[event.key] = true;
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+        }
+
+        if (pressedKeys[event.key]) return; // Prevent repeated triggers
+        pressedKeys[event.key] = true;
+
+        // Prevent default browser behavior for all relevant keys
+        event.preventDefault();
+        event.stopPropagation();
 
     let command = null;
+
     switch (event.key) {
-        case 'ArrowLeft':  command = { command: 'move', motor: 'base', direction: 'left' }; break;
+        case 'ArrowLeft': command = { command: 'move', motor: 'base', direction: 'left' }; break;
         case 'ArrowRight': command = { command: 'move', motor: 'base', direction: 'right' }; break;
-        case 'ArrowUp':    command = { command: 'move', motor: 'shoulder', direction: 'up' }; break;
-        case 'ArrowDown':  command = { command: 'move', motor: 'shoulder', direction: 'down' }; break;
-        case 'w':          command = { command: 'move', motor: 'elbow', direction: 'up' }; break;
-        case 's':          command = { command: 'move', motor: 'elbow', direction: 'down' }; break;
-        case 'a':          command = { command: 'move', motor: 'wrist', direction: 'left' }; break;
-        case 'd':          command = { command: 'move', motor: 'wrist', direction: 'right' }; break;
-        case 'q':          command = { command: 'move', motor: 'hand', direction: 'up' }; break; //  Move up/down
-        case 'e':          command = { command: 'move', motor: 'thumb', direction: 'down' }; break; //  Move up/down
-        case ' ':          command = { command: 'stop_all' }; break;
+        case 'ArrowUp': command = { command: 'move', motor: 'shoulder', direction: 'up' }; break;
+        case 'ArrowDown': command = { command: 'move', motor: 'shoulder', direction: 'down' }; break;
+        case 'w': command = { command: 'move', motor: 'elbow', direction: 'up' }; break;
+        case 's': command = { command: 'move', motor: 'elbow', direction: 'down' }; break;
+        case 'a': command = { command: 'move', motor: 'wrist', direction: 'left' }; break;
+        case 'd': command = { command: 'move', motor: 'wrist', direction: 'right' }; break;
+        case 't': command = { command: 'move', motor: 'thumb', direction: 'inc' }; break;
+        case 'g': command = { command: 'move', motor: 'thumb', direction: 'dec' }; break;
+        case 'y': command = { command: 'move', motor: 'hand', direction: 'inc' }; break;
+        case 'h': command = { command: 'move', motor: 'hand', direction: 'dec' }; break;
     }
+
     if (command) {
-        sendCommand(command); // Send the JSON object
+        sendCommand(command);
+        currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
     }
 });
+
 
 document.addEventListener('keyup', (event) => {
     pressedKeys[event.key] = false;
     currentCommandDisplay.innerText = `Current Command: None`;
+
     let command = null;
 
     switch (event.key) {
@@ -174,14 +188,18 @@ document.addEventListener('keyup', (event) => {
         case 's':          command = { command: 'stop', motor: 'elbow' }; break;
         case 'a':
         case 'd':          command = { command: 'stop', motor: 'wrist' }; break;
-        case 'q':          command = { command: 'stop', motor: 'hand' }; break; //Stop hand.
-        case 'e':          command = { command: 'stop', motor: 'thumb' }; break; //Stop thumb
-
+        case 't':          command = { command: 'stop', motor: 'thumb' }; break; // Stop Thumb
+        case 'g':          command = { command: 'stop', motor: 'thumb' }; break; // Stop Thumb
+        case 'y':          command = { command: 'stop', motor: 'hand' }; break;  // Stop Hand
+        case 'h':          command = { command: 'stop', motor: 'hand' }; break;  // Stop Hand
     }
+
     if (command) {
-        sendCommand(command); // Send the JSON object
+        sendCommand(command);
     }
 });
+
+
 
     // --- Gamepad Support ---
     let gamepadIndex = null;
