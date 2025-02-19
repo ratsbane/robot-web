@@ -83,21 +83,20 @@ def handle_client(conn, addr):
                 conn.sendall(f"Error: {e}".encode('utf-8')) # Send the error to the client!
                 break
 
+
 def process_commands():
     """Processes commands from the queue."""
     global current_moving_motor, command_queue  # Access the global variables
 
     while True:
-        if len(command_queue) > 0 and current_moving_motor is None:
-            # Get the next command from the queue
-            command = command_queue.pop(0) # Get the next command
+        if len(command_queue) > 0:  # Always process commands if they exist
+            command = command_queue.pop(0)  # Get the next command
             print(f"[{time.time()}] Processing command: {command}")
 
-            result = None
-            motor_name = command.get('motor')  # Get motor name
+            motor_name = command.get('motor')
             motor_id = None
 
-            # Find Motor ID (outside the if/elif blocks)
+            # Find Motor ID
             if motor_name:
                 for m_id, m_data in motor_controller.motor_limits.items():
                     if m_data['name'] == motor_name:
@@ -109,58 +108,42 @@ def process_commands():
                             motor_id = m_id
                             break
 
-            if command.get('command') == 'move_to':  # Absolute positioning
-                position = command.get('position')
-                speed = command.get('speed', DEFAULT_SPEED) # Get speed, use default.
-                if motor_id is not None and isinstance(position, int):
-                    result = motor_controller.move_motor_to_position(motor_id, motor_name, position, speed)
-                    if result['success']:
-                        current_moving_motor = motor_id  # Track moving motor
-                else:
-                    result = {'success': False, 'message': f'Invalid move_to command or unknown motor: {motor_name}'}
+            if command.get('command') == 'move':  # Absolute positioning
+                direction = command.get('direction')
+                speed = command.get('speed', DEFAULT_SPEED)  # Get speed, use default.
 
-            elif command.get('command') == 'move':  # Continuous movement
-                direction_str = command.get('direction')
-                speed = command.get('speed', DEFAULT_SPEED)
-                if motor_id is not None and direction_str in ('up', 'down', 'left', 'right'):
-                    if direction_str == 'left' or direction_str == 'up':
-                        direction = -1
-                    else: # 'right' or 'down'
-                        direction = 1
-                    result = motor_controller.move_motor(motor_id, motor_name, speed, direction)  # Use move_motor for continuous
+                if motor_id is not None:
+                    result = motor_controller.move_motor(motor_id, motor_name, direction, speed)
                     if result['success']:
-                        current_moving_motor = motor_id #Track currently-moving motor.
+                        current_moving_motor = motor_id  # Keep tracking
                 else:
                     result = {'success': False, 'message': f'Invalid move command or unknown motor: {motor_name}'}
 
             elif command.get('command') == 'stop':
                 if motor_id is not None:
-                    result = motor_controller.move_motor(motor_id, motor_name, 0, 0)  # Stop instantly
-                    current_moving_motor = None # Clear
+                    result = motor_controller.stop_motor(motor_id, motor_name)
+                    current_moving_motor = None  # Allow new commands
                 else:
                     result = {'success': False, 'message': f'Unknown motor to stop: {motor_name}'}
 
             elif command.get('command') == 'stop_all':
-                result = {'success':True, 'message': "All motors stopped"}
+                result = {'success': True, 'message': "All motors stopped"}
                 for motor_id in CALIBRATED_MOTORS:
                     motor_name = motor_controller.initial_motor_data[motor_id]['name']
-                    motor_result = motor_controller.move_motor(motor_id, motor_name, 0, 0) #Stop.
+                    motor_result = motor_controller.stop_motor(motor_id, motor_name)
                     if not motor_result['success']:
-                        result = motor_result #Return the error
-                        break # Stop on first error.
-                current_moving_motor = None
+                        result = motor_result  # Return the first error
+                        break
+                current_moving_motor = None  # Reset motor tracking
 
             else:
                 result = {'success': False, 'message': f'Unknown command: {command.get("command")}'}
 
-
-        elif current_moving_motor is not None:
-            # Check if current motor is done. Not needed with continuous move.
-            pass
-
         else:
-            # No command, no motor moving. Wait.
-            time.sleep(0.05)
+            time.sleep(0.05)  # Prevent CPU overuse
+
+
+
 
 def main():
     # Start the command processing thread

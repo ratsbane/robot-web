@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Set -e: Exit immediately if a command exits with a non-zero status.
+set -e
+
+# Project directory
+PROJECT_DIR="/var/www/robot"
+
+echo "Stopping all services..."
+
+# Kill robot_control_service.py (if running)
+echo "Stopping robot_control_service.py..."
+pkill -f "$PROJECT_DIR/robot_control_service.py" || true
+
+# Kill Uvicorn processes (if running)
+echo "Stopping Uvicorn processes..."
+pkill -f uvicorn || true
+# pkill -f "$PROJECT_DIR/venv/bin/uvicorn" #Alternative, if the above doesn't work.
+
+
+echo "All services stopped."
+
+# Deactivate the virtual environment (optional, but good practice)
+if [ -n "$VIRTUAL_ENV" ]; then  # Check if VIRTUAL_ENV is set
+    echo "Deactivating virtual environment..."
+    deactivate
+fi

@@ -149,40 +149,43 @@ class MotorController:
         return current_pos
 
 
-    def move_motor(self, motor_id, motor_name, speed, direction):
-        """Move motor and return status."""
-        print(f"move_motor called: motor_id={motor_id}, motor_name={motor_name}, speed={speed}, direction={direction}")
+
+    def move_motor(self, motor_id, motor_name, direction, speed=500):
+        """Moves a motor toward its limit in the specified direction and returns the actual final position."""
+
         if motor_id not in self.motor_limits:
             print(f"  ERROR: Motor {motor_id} ({motor_name}) not calibrated!")
             return {"success": False, "message": f"Motor {motor_id} ({motor_name}) not calibrated!"}
 
         min_pos = self.motor_limits[motor_id]["min"]
         max_pos = self.motor_limits[motor_id]["max"]
-        print(f"  min_pos: {min_pos}, max_pos: {max_pos}")
 
-        current_pos_result = self.packet_handler.ReadPos(motor_id)
-        print(f"  ReadPos result: {current_pos_result}")
-        if current_pos_result is None:
-            print(f"  ERROR: ReadPos failed for motor {motor_id}.")
-            return {"success": False, "message": f"ReadPos failed for motor {motor_id}."}
+        # Convert direction to target position
+        if direction in ("inc", "down", "right"):
+            target_position = max_pos
+        elif direction in ("dec", "up", "left"):
+            target_position = min_pos
+        else:
+            return {"success": False, "message": f"Invalid direction: {direction}"}
 
-        start_pos = current_pos_result[0]
-        print(f"  start_pos: {start_pos}")
+        print(f"Moving {motor_name} ({motor_id}) to {target_position} at speed {speed}")
 
-        delta_position = int(speed * direction * self.update_interval)
-        new_position = start_pos + delta_position
-        new_position = max(min_pos, min(max_pos, new_position))
-        print(f"  delta_position: {delta_position}, new_position: {new_position}")
+        # Send movement command
+        start_time = time.time()
+        result, error = self.packet_handler.WritePosEx(motor_id, target_position, speed, 50)
+        end_time = time.time()
 
-        start_time = time.time()  # Record start time
-        result, error = self.packet_handler.WritePosEx(motor_id, new_position, speed, 50)
-        end_time = time.time()  # Record end time
-
-
-        print(f"  WritePosEx result: {result}, error: {error}")
         if result != COMM_SUCCESS or error != 0:
-            print(f"  ERROR: Failed to move {motor_name} (Motor {motor_id}) to position {new_position}")
-            return {"success": False, "message": f"Failed to move {motor_name} (Motor {motor_id}) to position {new_position}"}
+            print(f"  ERROR: Failed to move {motor_name} (Motor {motor_id}) in direction {direction}")
+            return {"success": False, "message": f"Failed to move {motor_name} in direction {direction}"}
+
+        # Read the actual new position from the motor
+        new_pos_result = self.packet_handler.ReadPos(motor_id)
+        if new_pos_result is None:
+            print(f"Warning: Failed to read final position for motor {motor_id} ({motor_name}).")
+            new_position = -1  # Placeholder for "unknown position"
+        else:
+            new_position = new_pos_result[0]  # Extract position from the result tuple
 
         # Get temperature (replace with actual SDK call if available)
         temp_result, _, _ = self.packet_handler.ReadTemperature(motor_id)
@@ -193,17 +196,18 @@ class MotorController:
 
         return {
             "success": True,
-            "start_position": start_pos,
-            "end_position": new_position,
+            "end_position": new_position,  # Return actual position
             "duration": duration_ms,  # Return milliseconds
             "temp": temperature,
             "message": f"Moved {motor_name} to {new_position}"
         }
 
 
-    def move_motor_to_position(self, motor_id, motor_name, position, speed=500): #Add a default value.
-        """Move motor to a specific position and return status."""
+
+    def move_motor_to_position(self, motor_id, motor_name, position, speed=500):
+        """Move a motor to a specific position and return status."""
         print(f"move_motor_to_position called: motor_id={motor_id}, motor_name={motor_name}, position={position}, speed={speed}")
+
         if motor_id not in self.motor_limits:
             print(f"  ERROR: Motor {motor_id} ({motor_name}) not calibrated!")
             return {"success": False, "message": f"Motor {motor_id} ({motor_name}) not calibrated!"}
@@ -212,11 +216,11 @@ class MotorController:
         max_pos = self.motor_limits[motor_id]["max"]
         print(f"  min_pos: {min_pos}, max_pos: {max_pos}")
 
-        #Bound the position
+        # Bound the position within valid limits
         position = max(min_pos, min(max_pos, int(position)))
 
+        # Read the current motor position before moving
         current_pos_result = self.packet_handler.ReadPos(motor_id)
-        print(f"  ReadPos result: {current_pos_result}")
         if current_pos_result is None:
             print(f"  ERROR: ReadPos failed for motor {motor_id}.")
             return {"success": False, "message": f"ReadPos failed for motor {motor_id}."}
@@ -224,29 +228,71 @@ class MotorController:
         start_pos = current_pos_result[0]
         print(f"  start_pos: {start_pos}")
 
+        # Send movement command
         start_time = time.time()
         result, error = self.packet_handler.WritePosEx(motor_id, position, speed, 50)
-        end_time = time.time()
-
-        print(f"  WritePosEx result: {result}, error: {error}")
+    
         if result != COMM_SUCCESS or error != 0:
             print(f"  ERROR: Failed to move {motor_name} (Motor {motor_id}) to position {position}")
             return {"success": False, "message": f"Failed to move {motor_name} (Motor {motor_id}) to position {position}"}
 
+        # Wait until the motor reaches the target position
+        while True:
+            time.sleep(0.1)  # Small delay to avoid excessive CPU usage
+            current_pos_result = self.packet_handler.ReadPos(motor_id)
+            if current_pos_result is None:
+                print(f"  ERROR: ReadPos failed for motor {motor_id} during movement.")
+                break  # Exit loop if position reading fails
+            new_position = current_pos_result[0]
+            print(f"  Current position: {new_position}, Target: {position}")
+
+            # Allow some tolerance for minor fluctuations in reported position
+            if abs(new_position - position) < 5:
+                break  # Stop waiting if within 5 units of target
+
+        end_time = time.time()
+
         # Get temperature (replace with actual SDK call if available)
         temp_result, _, _ = self.packet_handler.ReadTemperature(motor_id)
-        temperature = temp_result if temp_result is not None else -1
+        temperature = temp_result if temp_result is not None else -1  # Use -1 as a placeholder for "unknown"
 
-        duration_ms = round((end_time - start_time) * 1000, 1)  # Convert to milliseconds and round
+        # Calculate movement duration in milliseconds
+        duration_ms = round((end_time - start_time) * 1000, 1)
 
         return {
             "success": True,
             "start_position": start_pos,
-            "end_position": position,
+            "end_position": new_position,  # ✅ Now returns actual position instead of assumed one
             "duration": duration_ms,
             "temp": temperature,
-            "message": f"Moved {motor_name} to {position}"
+            "message": f"Moved {motor_name} to {new_position}"
         }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def stop_motor(self, motor_id, motor_name):
+        """Stops a specific motor by setting its goal position to its current position."""
+        current_pos_result = self.packet_handler.ReadPos(motor_id)
+        if current_pos_result is None:
+            print(f"Warning: ReadPos failed for motor {motor_id} ({motor_name}).")
+            return {"success": False, "message": f"Failed to read position for {motor_name}"}
+
+        current_position = current_pos_result[0]
+        print(f"Stopping motor {motor_name} at position {current_position}")
+
+        self.write_pos_ex(motor_id, current_position, speed=0, acc=0)
+        return {"success": True, "message": f"Stopped {motor_name}"}
 
 
     def write_pos_ex(self, motor_id, position, speed, acc):
