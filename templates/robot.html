@@ -36,7 +36,9 @@
     </div>
 
     <div id="controls">
-        <div id="gamepadStatus">Gamepad: Not Connected</div>
+	<p id="gamepad-status">Gamepad: Not Connected ❌</p>
+        <button id="gamepad-toggle" onclick="disconnectGamepad()" style="display: none;">Disconnect Gamepad</button>
+
         <div id="key-guide">
             <h3>Key Controls:</h3>
             <ul>
@@ -118,7 +120,7 @@
 
      function sendCommand(command) {
         if (socketReady) {
-            console.log("Sending command:", command);
+            console.log("Sending command:", JSON.stringify(command));
             socket.send(JSON.stringify(command)); //SEND THE JSON STRING
             currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
             addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
@@ -204,18 +206,167 @@ document.addEventListener('keyup', (event) => {
     // --- Gamepad Support ---
     let gamepadIndex = null;
 
-    window.addEventListener("gamepadconnected", (event) => {
-        console.log("Gamepad connected:", event.gamepad);
-        gamepadIndex = event.gamepad.index;
-        document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
-        gameLoop(); // Start the game loop
-    });
 
-    window.addEventListener("gamepaddisconnected", (event) => {
-        console.log("Gamepad disconnected:", event.gamepad);
-        gamepadIndex = null;
-        document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
-    });
+const DEAD_ZONE = 0.4; // Ignore small joystick movements (increased from 0.2)
+const MOVE_DELAY = 200; // Minimum time between movement commands (in ms)
+let lastMoveTime = 0;
+let lastCommands = {}; // Track last commands sent to prevent duplicates
+let wristDirection = 1; // 1 = clockwise, -1 = counterclockwise
+let thumbDirection = 1; // 1 = open, -1 = close
+let handDirection = 1;  // 1 = open, -1 = close
+let lastThumbTrigger = 0;
+let lastHandTrigger = 0;
+
+
+
+
+window.addEventListener("gamepadconnected", (event) => {
+    console.log("Gamepad connected:", event.gamepad);
+    updateGamepadStatus(true);
+    requestAnimationFrame(updateGamepad);
+});
+
+window.addEventListener("gamepaddisconnected", (event) => {
+    console.log("Gamepad disconnected:", event.gamepad);
+    updateGamepadStatus(false);
+});
+
+
+function updateGamepadStatus(connected) {
+    const gamepadStatus = document.getElementById("gamepad-status");
+    const gamepadButton = document.getElementById("gamepad-toggle");
+
+    if (connected) {
+        gamepadStatus.innerText = "Gamepad: Connected 🎮";
+        gamepadButton.innerText = "Disconnect Gamepad";
+        gamepadButton.style.display = "block"; // Show the button
+    } else {
+        gamepadStatus.innerText = "Gamepad: Not Connected ❌";
+        gamepadButton.innerText = "Connect Gamepad";
+        gamepadButton.style.display = "none"; // Hide the button if no gamepad
+    }
+}
+
+function disconnectGamepad() {
+    console.log("Gamepad disconnected manually.");
+    updateGamepadStatus(false);
+}
+
+
+function updateGamepad() {
+    const gamepads = navigator.getGamepads();
+    if (!gamepads[0]) return; // No gamepad connected
+
+    const gp = gamepads[0]; // Assuming one gamepad
+    const now = Date.now();
+    let command = null;
+
+    // **LEFT STICK - Base Rotation & Shoulder Movement**
+    let lx = gp.axes[0]; // Left stick horizontal (base rotation)
+    let ly = gp.axes[1]; // Left stick vertical (shoulder)
+
+    if (Math.abs(lx) > DEAD_ZONE) {
+        command = { command: "move", motor: "base", direction: lx > 0 ? "right" : "left" };
+    } else if (lastCommands["base"] !== "stop") {
+        command = { command: "stop", motor: "base" };
+    }
+
+    if (Math.abs(ly) > DEAD_ZONE) {
+        command = { command: "move", motor: "shoulder", direction: ly > 0 ? "down" : "up" };
+    } else if (lastCommands["shoulder"] !== "stop") {
+        command = { command: "stop", motor: "shoulder" };
+    }
+
+    // **RIGHT STICK - Elbow & Wrist**
+    let rx = gp.axes[2]; // Right stick horizontal (wrist)
+    let ry = gp.axes[3]; // Right stick vertical (elbow)
+
+    if (Math.abs(rx) > DEAD_ZONE) {
+        command = { command: "move", motor: "wrist", direction: rx > 0 ? "right" : "left" };
+    } else if (lastCommands["wrist"] !== "stop") {
+        command = { command: "stop", motor: "wrist" };
+    }
+
+    if (Math.abs(ry) > DEAD_ZONE) {
+        command = { command: "move", motor: "elbow", direction: ry > 0 ? "down" : "up" };
+    } else if (lastCommands["elbow"] !== "stop") {
+        command = { command: "stop", motor: "elbow" };
+    }
+
+    // **LEFT TRIGGER (LT) for Hand Toggle**
+    let lt = gp.buttons[6].value;
+    if (lt > DEAD_ZONE && lastHandTrigger <= DEAD_ZONE) {
+        handDirection *= -1; // Toggle direction
+        command = { command: "move", motor: "hand", direction: handDirection > 0 ? "inc" : "dec" };
+    } else if (lt <= DEAD_ZONE && lastHandTrigger > DEAD_ZONE) {
+        command = { command: "stop", motor: "hand" };
+    }
+    lastHandTrigger = lt;
+
+    // **RIGHT TRIGGER (RT) for Thumb Toggle**
+    let rt = gp.buttons[7].value;
+    if (rt > DEAD_ZONE && lastThumbTrigger <= DEAD_ZONE) {
+        thumbDirection *= -1; // Toggle direction
+        command = { command: "move", motor: "thumb", direction: thumbDirection > 0 ? "inc" : "dec" };
+    } else if (rt <= DEAD_ZONE && lastThumbTrigger > DEAD_ZONE) {
+        command = { command: "stop", motor: "thumb" };
+    }
+    lastThumbTrigger = rt;
+
+    if (command && now - lastMoveTime > MOVE_DELAY) {
+        sendCommand(command);
+        console.log("Gamepad Command:", command);
+        lastMoveTime = now;
+        lastCommands[command.motor] = command.command;
+    }
+
+    requestAnimationFrame(updateGamepad);
+}
+
+
+
+
+
+window.addEventListener("load", () => {
+    setTimeout(checkForGamepads, 500); // Delay to allow browser to detect gamepads
+});
+
+window.addEventListener("gamepadconnected", (event) => {
+    console.log("Gamepad connected:", event.gamepad);
+    updateGamepadStatus(true);
+    requestAnimationFrame(updateGamepad);
+});
+
+window.addEventListener("gamepaddisconnected", (event) => {
+    console.log("Gamepad disconnected:", event.gamepad);
+    updateGamepadStatus(false);
+});
+
+function checkForGamepads() {
+    const gamepads = navigator.getGamepads();
+    if (gamepads[0]) {
+        console.log("Gamepad detected on page load.");
+        updateGamepadStatus(true);
+        requestAnimationFrame(updateGamepad);
+    }
+}
+
+
+function updateGamepadStatus(connected) {
+    const gamepadStatus = document.getElementById("gamepad-status");
+    const gamepadButton = document.getElementById("gamepad-toggle");
+
+    if (connected) {
+        gamepadStatus.innerText = "Gamepad: Connected 🎮";
+        gamepadButton.innerText = "Disconnect Gamepad";
+        gamepadButton.style.display = "block"; // Show the button
+    } else {
+        gamepadStatus.innerText = "Gamepad: Not Connected ❌";
+        gamepadButton.innerText = "Connect Gamepad";
+        gamepadButton.style.display = "none"; // Hide the button if no gamepad
+    }
+}
+
 
     function gameLoop() {
         if (gamepadIndex !== null) {
