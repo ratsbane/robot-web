@@ -77,25 +77,103 @@ def send_command_to_rcs(command_json: str) -> str:
         return json.dumps({"success": false, "message": f"Error: {e}"}) #Return JSON
 
 
+
+connected_clients = set()  # Store connected WebSocket clients
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """Handles WebSocket connections from the web page."""
     await websocket.accept()
-    print(f"[{time.time()}] Client connected to WebSocket server on port {WS_PORT}")
+    connected_clients.add(websocket)
+    print(f"[{time.time()}] Client connected to WebSocket server")
+
     try:
         while True:
             data = await websocket.receive_text()
             print(f"[{time.time()}] Received command from client: {data}")
-
-            # Run send_command_to_rcs in a thread pool
-            response = await run_in_threadpool(send_command_to_rcs, data)
-
-            print(f"[{time.time()}] Sending response to client: {response}")
-            await websocket.send_text(response) # Send the raw JSON string back
+            response_json = await run_in_threadpool(send_command_to_rcs, data)
+            await websocket.send_text(response_json)
 
     except WebSocketDisconnect:
         print(f"[{time.time()}] Client disconnected from WebSocket server")
+        connected_clients.remove(websocket)
     except Exception as e:
         print(f"[{time.time()}] WebSocket error: {e}")
+
+async def listen_for_motor_updates():
+    """Listens for motor status updates from `robot_control_service.py` and broadcasts them."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("localhost", 9001))  # ✅ Listening for motor updates on port 9001
+    server.listen()
+
+    while True:
+        conn, _ = server.accept()
+        with conn:
+            data = conn.recv(1024)
+            if not data:
+                continue
+            
+            try:
+                status_update = json.loads(data.decode("utf-8"))
+                print(f"[{time.time()}] Received motor update: {status_update}")
+
+                # ✅ **Broadcast update to all connected WebSocket clients**
+                await broadcast_to_websockets(status_update)
+
+            except json.JSONDecodeError:
+                print(f"[{time.time()}] Error decoding motor update JSON: {data}")
+
+async def broadcast_to_websockets(message):
+    """Send motor updates to all connected WebSocket clients."""
+    if connected_clients:
+        message_json = json.dumps(message)
+        await asyncio.gather(*[client.send_text(message_json) for client in connected_clients])
+
+# Start listening for updates when the WebSocket server starts
+asyncio.create_task(listen_for_motor_updates())
+
+
+
+
+
+
+
+
+
+
+
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    connected_clients.add(websocket)
+    print(f"[{time.time()}] Client connected to WebSocket server on port {WS_PORT}")
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            print(f"[{time.time()}] Received command from client: {data}")
+            response_json = await run_in_threadpool(send_command_to_rcs, data)
+            await websocket.send_text(response_json)
+
+    except WebSocketDisconnect:
+        print(f"[{time.time()}] Client disconnected from WebSocket server")
+        connected_clients.remove(websocket)
+    except Exception as e:
+        print(f"[{time.time()}] WebSocket error: {e}")
+
+async def broadcast_to_websockets(message):
+    """Send motor updates to all connected WebSocket clients."""
+    if connected_clients:
+        message_json = json.dumps(message)
+        await asyncio.gather(*[client.send_text(message_json) for client in connected_clients])
+
+
+
+
+
 
 if __name__ == "__main__":
     import uvicorn

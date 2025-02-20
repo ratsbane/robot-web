@@ -25,6 +25,12 @@
             color: red;
             font-weight: bold;
         }
+	#motor-list { display: flex; flex-direction: column; gap: 8px; font-family: Arial, sans-serif; }
+        .motor-item { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; border-bottom: 1px solid #ddd;}
+        .motor-name { font-size: 18px; font-weight: bold; color: #007BFF; }
+        .motor-status { font-size: 16px; color: #28A745; }
+        .motor-temp { color: #DC3545; }
+        .motor-keys { font-size: 14px; color: #666; }
     </style>
 </head>
 <body>
@@ -38,19 +44,62 @@
     <div id="controls">
 	<p id="gamepad-status">Gamepad: Not Connected ❌</p>
         <button id="gamepad-toggle" onclick="disconnectGamepad()" style="display: none;">Disconnect Gamepad</button>
+<div id="motor-list">
+    <div class="motor-item" id="motor-base">
+        <span class="motor-name">Base</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">←/→</span>
+    </div>
 
-        <div id="key-guide">
-            <h3>Key Controls:</h3>
-            <ul>
-                <li><strong>Base:</strong> Left/Right Arrows</li>
-                <li><strong>Shoulder:</strong> Up/Down Arrows</li>
-                <li><strong>Elbow:</strong> W/S</li>
-                <li><strong>Wrist:</strong> A/D</li>
-                <li><strong>Hand:</strong> Y/H</li>
-                <li><strong>Thumb:</strong> T/G</li>
-                <li><strong>Stop All:</strong> Spacebar</li>
-            </ul>
-        </div>
+    <div class="motor-item" id="motor-shoulder">
+        <span class="motor-name">Shoulder</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">↑/↓</span>
+    </div>
+
+    <div class="motor-item" id="motor-elbow">
+        <span class="motor-name">Elbow</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">W/S</span>
+    </div>
+
+    <div class="motor-item" id="motor-wrist">
+        <span class="motor-name">Wrist</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">A/D</span>
+    </div>
+
+    <div class="motor-item" id="motor-hand">
+        <span class="motor-name">Hand</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">Y/H</span>
+    </div>
+
+    <div class="motor-item" id="motor-thumb">
+        <span class="motor-name">Thumb</span>
+        <span class="motor-status">
+            <span class="motor-position">N/A</span> |
+            <span class="motor-temp">N/A</span>
+        </span>
+        <span class="motor-keys">T/G</span>
+    </div>
+</div>
+
         <div id="current-command">Current Command: None</div>
         <div id="error-display"></div>
         <div id="command-history"></div>
@@ -79,9 +128,25 @@
             clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
         };
 
-        socket.onmessage = (event) => {
-            document.getElementById('messages').innerText = event.data;
-            addToCommandHistory("Received: " + event.data);
+
+	socket.onmessage = function(event) {
+            let data;
+            try {
+                data = JSON.parse(event.data);
+            } catch (error) {
+                console.error("Error parsing WebSocket message:", error);
+                return;
+            }
+
+            console.log("Received data:", data); // Debugging output
+
+            if (data.success) {
+                let motorElement = document.getElementById(`motor-${data.motor}`);
+                if (motorElement) {
+                    motorElement.querySelector(".motor-position").innerText = data.end_position !== undefined ? data.end_position : "N/A";
+                    motorElement.querySelector(".motor-temp").innerText = data.temp !== undefined ? data.temp + "°C" : "N/A";
+                }
+            }
         };
 
         socket.onclose = (event) => {

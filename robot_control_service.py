@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import threading  # IMPORT THREADING
+import asyncio
 
 # Use the *correct* path to STservo_sdk here:
 sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
@@ -84,87 +85,103 @@ def handle_client(conn, addr):
                 break
 
 
-def process_commands():
-    """Processes commands from the queue."""
-    global current_moving_motor, command_queue  # Access the global variables
+
+import asyncio
+import json
+
+async def process_commands():
+    """Processes commands from the queue and broadcasts updates when done."""
+    global current_moving_motor, command_queue
 
     while True:
-        if len(command_queue) > 0:  # Always process commands if they exist
-            command = command_queue.pop(0)  # Get the next command
+        if len(command_queue) > 0 and current_moving_motor is None:
+            command = command_queue.pop(0)
             print(f"[{time.time()}] Processing command: {command}")
 
+            result = None
             motor_name = command.get('motor')
             motor_id = None
 
-            # Find Motor ID
-            if motor_name:
-                for m_id, m_data in motor_controller.motor_limits.items():
+            # Find motor ID
+            for m_id, m_data in motor_controller.motor_limits.items():
+                if m_data['name'] == motor_name:
+                    motor_id = m_id
+                    break
+            if motor_id is None:
+                for m_id, m_data in motor_controller.initial_motor_data.items():
                     if m_data['name'] == motor_name:
                         motor_id = m_id
                         break
-                if motor_id is None:
-                    for m_id, m_data in motor_controller.initial_motor_data.items():
-                        if m_data['name'] == motor_name:
-                            motor_id = m_id
-                            break
 
-            if command.get('command') == 'move':  # Absolute positioning
+            # Handle move command
+            if command.get('command') == 'move':
                 direction = command.get('direction')
-                speed = command.get('speed', DEFAULT_SPEED)  # Get speed, use default.
-
+                speed = command.get('speed', DEFAULT_SPEED)
                 if motor_id is not None:
                     result = motor_controller.move_motor(motor_id, motor_name, direction, speed)
                     if result['success']:
-                        current_moving_motor = motor_id  # Keep tracking
-                else:
-                    result = {'success': False, 'message': f'Invalid move command or unknown motor: {motor_name}'}
+                        current_moving_motor = motor_id  # Track moving motor
 
             elif command.get('command') == 'stop':
                 if motor_id is not None:
-                    result = motor_controller.stop_motor(motor_id, motor_name)
-                    current_moving_motor = None  # Allow new commands
-                else:
-                    result = {'success': False, 'message': f'Unknown motor to stop: {motor_name}'}
+                    result = motor_controller.move_motor(motor_id, motor_name, "stop", 0)
+                    current_moving_motor = None
 
             elif command.get('command') == 'stop_all':
                 result = {'success': True, 'message': "All motors stopped"}
                 for motor_id in CALIBRATED_MOTORS:
                     motor_name = motor_controller.initial_motor_data[motor_id]['name']
-                    motor_result = motor_controller.stop_motor(motor_id, motor_name)
+                    motor_result = motor_controller.move_motor(motor_id, motor_name, "stop", 0)
                     if not motor_result['success']:
-                        result = motor_result  # Return the first error
-                        break
-                current_moving_motor = None  # Reset motor tracking
+                        result = motor_result
+                        break  # Stop on first error
+                current_moving_motor = None
 
-            else:
-                result = {'success': False, 'message': f'Unknown command: {command.get("command")}'}
+            # ✅ **Broadcast motor status after executing a move command**
+            if result and result['success']:
+                status_update = {
+                    "success": True,
+                    "motor": motor_name,
+                    "end_position": result.get("end_position"),
+                    "temp": result.get("temp"),
+                    "message": "Motor status updated"
+                }
+                print(f"[{time.time()}] Sending motor update to websocket_server: {status_update}")
+
+                # ✅ **Send update to `websocket_server.py` over a new TCP connection**
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.connect(("localhost", 9001))  # ✅ Replace with websocket_server's status port
+                        s.sendall(json.dumps(status_update).encode('utf-8'))
+                except Exception as e:
+                    print(f"[{time.time()}] Error sending motor update to websocket_server: {e}")
 
         else:
-            time.sleep(0.05)  # Prevent CPU overuse
+            await asyncio.sleep(0.05)  # Prevent CPU overload
+
+
+
 
 
 
 
 def main():
-    # Start the command processing thread
-    command_thread = threading.Thread(target=process_commands, daemon=True)
-    command_thread.start()
+    """Start the robot control service and run the command processor asynchronously."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-    try: #Wrap in try/finally to ensure closure.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # ADD THIS LINE
-            s.bind((HOST, PORT))
-            s.listen()
-            print(f"Robot Control Service listening on {HOST}:{PORT}")
-            while True:
-                conn, addr = s.accept()  # Accept a connection
-                # Start a new thread to handle each client connection
-                client_thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
-                client_thread.start()
+    # ✅ Correct way to run an async function in a non-async main()
+    loop.create_task(process_commands())  # Schedule process_commands to run
+
+    try:
+        loop.run_forever()  # Keep the loop running
+    except KeyboardInterrupt:
+        print("Shutting down robot control service.")
     finally:
-        if port_handler:
-            print("Closing port handler...")
-            port_handler.closePort() #Close the port when the service exits
+        loop.close()
+
+
+
 
 
 if __name__ == '__main__':
