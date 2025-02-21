@@ -8,20 +8,46 @@ PROJECT_DIR="/var/www/robot"
 
 echo "Stopping all services..."
 
-# Kill robot_control_service.py (if running)
-echo "Stopping robot_control_service.py..."
-pkill -f "$PROJECT_DIR/robot_control_service.py" || true
+# Function to safely terminate a process
+terminate_process() {
+    local name="$1"
+    local pattern="$2"
 
-# Kill Uvicorn processes (if running)
-echo "Stopping Uvicorn processes..."
-pkill -f uvicorn || true
-# pkill -f "$PROJECT_DIR/venv/bin/uvicorn" #Alternative, if the above doesn't work.
+    echo "Attempting to stop $name..."
+    
+    pids=$(pgrep -f "$pattern")
+    if [ -n "$pids" ]; then
+        kill $pids
+        sleep 2  # Give processes time to terminate
 
+        # Check if still running
+        pids_still_running=$(pgrep -f "$pattern")
+        if [ -n "$pids_still_running" ]; then
+            echo "$name did not terminate gracefully. Forcing shutdown..."
+            kill -9 $pids_still_running
+        else
+            echo "$name stopped successfully."
+        fi
+    else
+        echo "$name was not running."
+    fi
+}
+
+# Stop robot_control_service.py
+terminate_process "robot_control_service.py" "$PROJECT_DIR/robot_control_service.py"
+
+# Stop websocket_server.py (Uvicorn)
+terminate_process "websocket_server.py" "uvicorn websocket_server:app --host 0.0.0.0 --port 8000"
+
+# Stop web_server.py (Uvicorn)
+terminate_process "web_server.py" "uvicorn web_server:app --host 0.0.0.0 --port 5000"
 
 echo "All services stopped."
 
-# Deactivate the virtual environment (optional, but good practice)
-if [ -n "$VIRTUAL_ENV" ]; then  # Check if VIRTUAL_ENV is set
+# Deactivate the virtual environment (optional)
+if [ -n "$VIRTUAL_ENV" ]; then
     echo "Deactivating virtual environment..."
     deactivate
 fi
+
+
