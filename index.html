@@ -1,471 +1,285 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Robot Arm Control Interface</title>
+    <title>Robot Arm Control</title>
     <style>
-        :root {
-            --primary-color: #2c3e50;
-            --secondary-color: #3498db;
-            --accent-color: #e74c3c;
-            --text-color: #333;
-            --light-bg: #f5f5f5;
-            --dark-bg: #34495e;
+        body { font-family: sans-serif; display: flex; }
+        #video-container { flex: 1; }
+        #controls { width: 250px; padding: 10px; border-left: 1px solid #ccc; }
+        #status { margin-top: 10px; }
+        #messages { margin-top: 10px; font-weight: bold; }
+        #gamepadStatus { margin-top: 10px; font-weight: bold; }
+        #key-guide { margin-top: 20px; }
+        #key-guide ul { list-style: none; padding: 0; }
+        #key-guide li { margin-bottom: 5px; }
+        #current-command { margin-top: 10px; font-weight: bold; color: blue; }
+        #command-history {
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            height: 100px;
+            overflow-y: scroll;
+            padding: 5px;
         }
-        
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            color: var(--text-color);
-            background-color: var(--light-bg);
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        
-        header {
-            background-color: var(--primary-color);
-            color: white;
-            padding: 1rem;
-            text-align: center;
-        }
-        
-        .main-content {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 20px;
-            margin-top: 20px;
-        }
-        
-        .video-container {
-            flex: 1;
-            min-width: 300px;
-            background-color: #000;
-            border-radius: 5px;
-            overflow: hidden;
-            position: relative;
-        }
-        
-        .video-stream {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-        
-        .control-panel {
-            flex: 1;
-            min-width: 300px;
-            background-color: white;
-            border-radius: 5px;
-            padding: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        
-        .connection-status {
-            background-color: var(--light-bg);
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 5px;
-            background-color: var(--accent-color);
-        }
-        
-        .connected {
-            background-color: #2ecc71;
-        }
-        
-        .motor-controls {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .motor-group {
-            border: 1px solid #e0e0e0;
-            border-radius: 5px;
-            padding: 15px;
-        }
-        
-        .motor-title {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 1.1rem;
-            color: var(--primary-color);
-        }
-        
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        
-        button {
-            padding: 8px 15px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
+        #error-display {
+            margin-top: 10px;
+            color: red;
             font-weight: bold;
-            transition: background-color 0.2s;
-        }
-        
-        .move-button {
-            background-color: var(--secondary-color);
-            color: white;
-        }
-        
-        .move-button:hover {
-            background-color: #2980b9;
-        }
-        
-        .stop-button {
-            background-color: var(--accent-color);
-            color: white;
-        }
-        
-        .stop-button:hover {
-            background-color: #c0392b;
-        }
-        
-        .stop-all-button {
-            background-color: var(--accent-color);
-            color: white;
-            padding: 12px;
-            font-size: 1.1rem;
-            width: 100%;
-            margin-top: 20px;
-        }
-        
-        .stop-all-button:hover {
-            background-color: #c0392b;
-        }
-        
-        .log-container {
-            margin-top: 20px;
-            border: 1px solid #e0e0e0;
-            border-radius: 5px;
-            padding: 10px;
-            background-color: var(--light-bg);
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        
-        .log-entry {
-            margin-bottom: 5px;
-            font-family: monospace;
-            white-space: pre-wrap;
-        }
-        
-        .sent {
-            color: var(--secondary-color);
-        }
-        
-        .received {
-            color: #2ecc71;
-        }
-        
-        .error {
-            color: var(--accent-color);
-        }
-        
-        .disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        @media (max-width: 768px) {
-            .main-content {
-                flex-direction: column;
-            }
-            
-            .video-container, .control-panel {
-                min-width: 100%;
-            }
         }
     </style>
 </head>
 <body>
-    <header>
+    <div id="video-container">
         <h1>Robot Arm Control</h1>
-    </header>
-    
-    <div class="container">
-        <div class="main-content">
-            <div class="video-container">
-                <img id="video-stream" class="video-stream" src="http://192.168.2.168:5000/video_feed" alt="Robot Camera Stream">
-            </div>
-            
-            <div class="control-panel">
-                <div class="connection-status">
-                    <div>
-                        <span id="status-indicator" class="status-indicator"></span>
-                        <span id="status-text">Disconnected</span>
-                    </div>
-                    <button id="connect-button">Connect</button>
-                </div>
-                
-                <div class="motor-controls">
-                    <div class="motor-group">
-                        <h3 class="motor-title">Base</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="base" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="base" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="base">Stop</button>
-                        </div>
-                    </div>
-                    
-                    <div class="motor-group">
-                        <h3 class="motor-title">Shoulder</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="shoulder" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="shoulder" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="shoulder">Stop</button>
-                        </div>
-                    </div>
-                    
-                    <div class="motor-group">
-                        <h3 class="motor-title">Elbow</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="elbow" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="elbow" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="elbow">Stop</button>
-                        </div>
-                    </div>
-                    
-                    <div class="motor-group">
-                        <h3 class="motor-title">Wrist</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="wrist" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="wrist" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="wrist">Stop</button>
-                        </div>
-                    </div>
-                    
-                    <div class="motor-group">
-                        <h3 class="motor-title">Hand</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="hand" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="hand" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="hand">Stop</button>
-                        </div>
-                    </div>
-                    
-                    <div class="motor-group">
-                        <h3 class="motor-title">Thumb</h3>
-                        <div class="button-group">
-                            <button class="move-button" data-motor="thumb" data-direction="inc">+</button>
-                            <button class="move-button" data-motor="thumb" data-direction="dec">-</button>
-                            <button class="stop-button" data-motor="thumb">Stop</button>
-                        </div>
-                    </div>
-                </div>
-                
-                <button id="stop-all-button" class="stop-all-button">STOP ALL MOTORS</button>
-                
-                <div class="log-container">
-                    <div id="log"></div>
-                </div>
-            </div>
-        </div>
+        <!-- Updated to use the new video stream URL -->
+        <img src="http://192.168.2.168:5000/video_feed" width="640" height="480" id="video-stream">
+        <div id="status"></div>
+        <div id="messages"></div>
     </div>
+
+    <div id="controls">
+        <div id="gamepadStatus">Gamepad: Not Connected</div>
+        <div id="key-guide">
+            <h3>Key Controls:</h3>
+            <ul>
+                <li><strong>Base:</strong> Left/Right Arrows</li>
+                <li><strong>Shoulder:</strong> Up/Down Arrows</li>
+                <li><strong>Elbow:</strong> W/S</li>
+                <li><strong>Wrist:</strong> A/D</li>
+                <li><strong>Hand:</strong> Y/H</li>
+                <li><strong>Thumb:</strong> T/G</li>
+                <li><strong>Stop All:</strong> Spacebar</li>
+            </ul>
+        </div>
+        <div id="current-command">Current Command: None</div>
+        <div id="error-display"></div>
+        <div id="command-history"></div>
+        <button id="reconnectButton">Reconnect</button>
+    </div>
+
+<script>
+    let socket;
+    let currentCommandDisplay = document.getElementById('current-command');
+    let commandHistoryDiv = document.getElementById('command-history');
+    let errorDisplay = document.getElementById('error-display');
+    let socketReady = false;
+    let reconnectInterval = 1000; // Initial reconnect delay (1 second)
+    let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
+    let reconnectTimeout;
     
-    <script>
-        // Configuration
-        const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
-        const VIDEO_STREAM_URL = 'http://' + window.location.hostname + ':5000/video_feed';
-        
-        // DOM Elements
-        const connectButton = document.getElementById('connect-button');
-        const statusIndicator = document.getElementById('status-indicator');
-        const statusText = document.getElementById('status-text');
-        const stopAllButton = document.getElementById('stop-all-button');
-        const logContainer = document.getElementById('log');
-        const videoElement = document.getElementById('video-stream');
-        
-        // Initialize WebSocket
-        let socket = null;
-        let isConnected = false;
-        
-        // Initialize video stream
-        function initVideoStream() {
-            // Set the video source to our streaming service
-            videoElement.src = VIDEO_STREAM_URL;
-            
-            // Handle load errors
-            videoElement.onerror = function() {
-                log('Error loading video stream', 'error');
-                
-                // Try to reload after a delay
-                setTimeout(function() {
-                    videoElement.src = VIDEO_STREAM_URL + '?reload=' + new Date().getTime();
-                }, 5000);
-            };
+    // Updated to use dynamic hostname instead of hardcoded "robot"
+    const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
+    const VIDEO_STREAM_URL = 'http://' + window.location.hostname + ':5000/video_feed';
+    
+    // Update video stream source to use dynamic hostname
+    document.getElementById('video-stream').src = VIDEO_STREAM_URL;
+
+    function connectSocket() {
+        // Connect to the WebSocket server on port 8000
+        socket = new WebSocket(WS_SERVER);
+
+        socket.onopen = () => {
+            document.getElementById('status').innerText = 'Connected';
+            socketReady = true;
+            errorDisplay.innerText = ''; // Clear errors on successful connection
+            reconnectInterval = 1000; // Reset reconnect interval on successful connection
+            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
+        };
+
+        socket.onmessage = (event) => {
+            document.getElementById('messages').innerText = event.data;
+            addToCommandHistory("Received: " + event.data);
+        };
+
+        socket.onclose = (event) => {
+            document.getElementById('status').innerText = 'Disconnected';
+            socketReady = false;
+            console.log('WebSocket closed:', event);
+            scheduleReconnect(); // Attempt to reconnect
+        };
+
+        socket.onerror = (error) => {
+            errorDisplay.innerText = 'WebSocket Error: ' + error;
+            console.error('WebSocket error:', error);
+        };
+    }
+    
+    function scheduleReconnect() {
+        if (!socketReady) { // Only attempt reconnect if not already connected/connecting
+            reconnectTimeout = setTimeout(() => {
+                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
+                connectSocket();
+                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
+            }, reconnectInterval);
         }
-        
-        // Log function
-        function log(message, type = 'info') {
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-            logContainer.appendChild(entry);
-            logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    connectSocket(); // Initial connection
+
+    document.getElementById('reconnectButton').addEventListener('click', () => {
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            socket.close(); // Close any existing connection first
         }
-        
-        // Update connection status UI
-        function updateConnectionStatus(connected) {
-            isConnected = connected;
-            if (connected) {
-                statusIndicator.classList.add('connected');
-                statusText.textContent = 'Connected';
-                connectButton.textContent = 'Disconnect';
-            } else {
-                statusIndicator.classList.remove('connected');
-                statusText.textContent = 'Disconnected';
-                connectButton.textContent = 'Connect';
-            }
+        //Don't call connect socket directly. Call scheduleReconnect.
+        scheduleReconnect(); // Manually trigger a reconnect attempt
+    });
+
+    const pressedKeys = {}; // Keep track of pressed keys
+
+    function sendCommand(command) {
+        if (socketReady) {
+            console.log("Sending command:", command);
+            socket.send(JSON.stringify(command)); //SEND THE JSON STRING
+            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
+            addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
+        } else {
+            errorDisplay.innerText = "Cannot send command: Socket not connected.";
+            console.log("Socket not ready, cannot send command:", command); // Log to console
         }
-        
-        // Connect to WebSocket
-        function connect() {
-            if (socket) {
-                socket.close();
-                return;
-            }
-            
-            try {
-                socket = new WebSocket(WS_SERVER);
-                
-                socket.onopen = () => {
-                    updateConnectionStatus(true);
-                    log('Connected to robot control service', 'info');
-                    enableControls(true);
-                };
-                
-                socket.onmessage = (event) => {
-                    log(`Received: ${event.data}`, 'received');
-                    
-                    // Parse the response
-                    try {
-                        const response = JSON.parse(event.data);
-                        if (response.type === 'ping') {
-                            // No need to log pings
-                            return;
-                        }
-                        
-                        if (!response.success) {
-                            log(`Error: ${response.message}`, 'error');
-                        }
-                    } catch (e) {
-                        log(`Error parsing response: ${e}`, 'error');
-                    }
-                };
-                
-                socket.onclose = () => {
-                    updateConnectionStatus(false);
-                    log('Disconnected from robot control service', 'info');
-                    enableControls(false);
-                    socket = null;
-                };
-                
-                socket.onerror = (error) => {
-                    log(`WebSocket Error: ${error}`, 'error');
-                };
-            } catch (error) {
-                log(`Connection Error: ${error}`, 'error');
-            }
+    }
+
+    function addToCommandHistory(entry) {
+        const commandElement = document.createElement('div');
+        commandElement.innerText = entry;
+        commandHistoryDiv.appendChild(commandElement);
+        commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
+    }
+
+    // Fix key mappings to match websocket_server.py expectations
+    // The server expects "inc"/"dec" for directions, not "left"/"right"/"up"/"down"
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
         }
-        
-        // Enable/disable control buttons
-        function enableControls(enabled) {
-            const buttons = document.querySelectorAll('.move-button, .stop-button, #stop-all-button');
-            buttons.forEach(button => {
-                button.disabled = !enabled;
-                if (enabled) {
-                    button.classList.remove('disabled');
+
+        if (pressedKeys[event.key]) return; // Prevent repeated triggers
+        pressedKeys[event.key] = true;
+
+        // Prevent default browser behavior for all relevant keys
+        event.preventDefault();
+        event.stopPropagation();
+
+        let command = null;
+
+        // Updated to use inc/dec instead of directional names
+        switch (event.key) {
+            case 'ArrowLeft': command = { command: 'move', motor: 'base', direction: 'dec' }; break;
+            case 'ArrowRight': command = { command: 'move', motor: 'base', direction: 'inc' }; break;
+            case 'ArrowUp': command = { command: 'move', motor: 'shoulder', direction: 'inc' }; break;
+            case 'ArrowDown': command = { command: 'move', motor: 'shoulder', direction: 'dec' }; break;
+            case 'w': command = { command: 'move', motor: 'elbow', direction: 'inc' }; break;
+            case 's': command = { command: 'move', motor: 'elbow', direction: 'dec' }; break;
+            case 'a': command = { command: 'move', motor: 'wrist', direction: 'dec' }; break;
+            case 'd': command = { command: 'move', motor: 'wrist', direction: 'inc' }; break;
+            case 't': command = { command: 'move', motor: 'thumb', direction: 'inc' }; break;
+            case 'g': command = { command: 'move', motor: 'thumb', direction: 'dec' }; break;
+            case 'y': command = { command: 'move', motor: 'hand', direction: 'inc' }; break;
+            case 'h': command = { command: 'move', motor: 'hand', direction: 'dec' }; break;
+            case ' ': command = { command: 'stop_all' }; break; // Added spacebar for stop_all
+        }
+
+        if (command) {
+            sendCommand(command);
+            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
+        }
+    });
+
+    document.addEventListener('keyup', (event) => {
+        pressedKeys[event.key] = false;
+        currentCommandDisplay.innerText = `Current Command: None`;
+
+        let command = null;
+
+        switch (event.key) {
+            case 'ArrowLeft':
+            case 'ArrowRight': command = { command: 'stop', motor: 'base' }; break;
+            case 'ArrowUp':
+            case 'ArrowDown': command = { command: 'stop', motor: 'shoulder' }; break;
+            case 'w':
+            case 's': command = { command: 'stop', motor: 'elbow' }; break;
+            case 'a':
+            case 'd': command = { command: 'stop', motor: 'wrist' }; break;
+            case 't':
+            case 'g': command = { command: 'stop', motor: 'thumb' }; break;
+            case 'y':
+            case 'h': command = { command: 'stop', motor: 'hand' }; break;
+        }
+
+        if (command) {
+            sendCommand(command);
+        }
+    });
+
+    // --- Gamepad Support ---
+    let gamepadIndex = null;
+
+    window.addEventListener("gamepadconnected", (event) => {
+        console.log("Gamepad connected:", event.gamepad);
+        gamepadIndex = event.gamepad.index;
+        document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
+        gameLoop(); // Start the game loop
+    });
+
+    window.addEventListener("gamepaddisconnected", (event) => {
+        console.log("Gamepad disconnected:", event.gamepad);
+        gamepadIndex = null;
+        document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
+    });
+
+    function gameLoop() {
+        if (gamepadIndex !== null) {
+            const gamepad = navigator.getGamepads()[gamepadIndex];
+            if (gamepad) {
+                // Left Joystick (Base and Shoulder)
+                const leftX = gamepad.axes[0];
+                const leftY = gamepad.axes[1];
+
+                // Updated to use inc/dec instead of left/right/up/down
+                if (Math.abs(leftX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'base', direction: leftX > 0 ? 'inc' : 'dec'});
                 } else {
-                    button.classList.add('disabled');
+                    sendCommand({command: 'stop', motor: 'base'});
                 }
-            });
-        }
-        
-        // Send command to robot
-        function sendCommand(command) {
-            if (!socket || socket.readyState !== WebSocket.OPEN) {
-                log('Not connected to robot control service', 'error');
-                return;
+
+                if (Math.abs(leftY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'shoulder', direction: leftY > 0 ? 'dec' : 'inc'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'shoulder'});
+                }
+
+                // Right Joystick (Elbow and Wrist)
+                const rightX = gamepad.axes[3];
+                const rightY = gamepad.axes[4];
+
+                if (Math.abs(rightX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'wrist', direction: rightX > 0 ? 'inc' : 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'wrist'});
+                }
+
+                if (Math.abs(rightY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'elbow', direction: rightY > 0 ? 'dec' : 'inc'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'elbow'});
+                }
+
+                // Triggers (Hand and Thumb)
+                const leftTrigger = gamepad.buttons[6].value;
+                const rightTrigger = gamepad.buttons[7].value;
+
+                if (leftTrigger > 0.2) {
+                    sendCommand({command: 'move', motor: 'hand', direction: 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'hand'});
+                }
+                if (rightTrigger > 0.2) {
+                    sendCommand({command: 'move', motor: 'thumb', direction: 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'thumb'});
+                }
             }
-            
-            const commandStr = JSON.stringify(command);
-            socket.send(commandStr);
-            log(`Sent: ${commandStr}`, 'sent');
         }
-        
-        // Event Listeners
-        
-        // Connect button
-        connectButton.addEventListener('click', connect);
-        
-        // Move buttons
-        document.querySelectorAll('.move-button').forEach(button => {
-            button.addEventListener('click', () => {
-                const motor = button.getAttribute('data-motor');
-                const direction = button.getAttribute('data-direction');
-                
-                sendCommand({
-                    command: 'move',
-                    motor: motor,
-                    direction: direction,
-                    speed: 50 // Default speed
-                });
-            });
-        });
-        
-        // Stop buttons
-        document.querySelectorAll('.stop-button').forEach(button => {
-            button.addEventListener('click', () => {
-                const motor = button.getAttribute('data-motor');
-                
-                sendCommand({
-                    command: 'stop',
-                    motor: motor
-                });
-            });
-        });
-        
-        // Stop All button
-        stopAllButton.addEventListener('click', () => {
-            sendCommand({
-                command: 'stop_all'
-            });
-        });
-        
-        // Initialize on page load
-        window.addEventListener('load', () => {
-            log('Robot Control Interface Loaded', 'info');
-            log(`WebSocket Server: ${WS_SERVER}`, 'info');
-            log(`Video Stream: ${VIDEO_STREAM_URL}`, 'info');
-            
-            // Initially disable controls
-            enableControls(false);
-            
-            // Initialize video stream
-            initVideoStream();
-        });
-    </script>
+        requestAnimationFrame(gameLoop);
+    }
+</script>
 </body>
 </html>
