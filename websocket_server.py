@@ -4,6 +4,48 @@ import asyncio
 from starlette.concurrency import run_in_threadpool
 import time
 import json
+import os
+import logging
+import sys
+
+# Configure logging based on environment variable
+def setup_logging():
+    # Get log level from environment variable (default to INFO)
+    log_level_name = os.environ.get('WEBSOCKET_SERVER_LOG_LEVEL', 'INFO').upper()
+    
+    # Map string log levels to logging module constants
+    log_levels = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL,
+        'NONE': 100  # Custom level higher than any standard level
+    }
+    
+    # Set default level if invalid level provided
+    log_level = log_levels.get(log_level_name, logging.INFO)
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format='[%(asctime)s] [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        stream=sys.stdout
+    )
+    
+    # Create logger instance for our module
+    logger = logging.getLogger('websocket_server')
+    logger.setLevel(log_level)
+    
+    # Show startup message about log level
+    if log_level < 100:  # If not NONE
+        logger.info(f"Logging configured with level: {log_level_name}")
+    
+    return logger
+
+# Initialize logger
+logger = setup_logging()
 
 # WebSocket command protocol (from web page to websocket_server.py):
 # All commands are JSON objects.
@@ -43,6 +85,30 @@ import json
 # }
 #   - Stops all motors. No additional parameters.
 #
+# {
+#   "command": "start_logging",
+#   "action_name": "<name>",
+#   "description": "<description>",  // Optional
+#   "timeout": <timeout_in_seconds>,  // Optional
+#   "video_sources": [                // Optional
+#     {
+#       "source": "<video_source_url>",
+#       "method": "<stream_or_opencv>",
+#       "camera_id": <camera_id_number>
+#     }
+#   ]
+# }
+#   - Starts logging robot actions in GR00T-compatible format.
+#   - <name>: Name of the action being performed.
+#   - <description>: Optional description of the action.
+#   - <timeout_in_seconds>: Optional timeout to automatically stop logging.
+#   - video_sources: Optional array of video source configurations.
+#
+# {
+#   "command": "stop_logging"
+# }
+#   - Stops the currently active logging session.
+#
 # Connection Maintenance:
 # The WebSocket server sends pings to keep the connection alive during periods of inactivity.
 # This helps prevent timeouts and ensures the connection remains stable.
@@ -62,24 +128,35 @@ VALID_DIRECTIONS = ["inc", "dec"]
 
 def send_command_to_rcs(command_json: str) -> str:
     """Sends a JSON command to the Robot Control Service and returns the response."""
-    print(f"[{time.time()}] send_command_to_rcs called with command: {command_json}")  # Debug
+    logger.debug(f"send_command_to_rcs called with command: {command_json}")
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            print(f"[{time.time()}] Connecting to RCS at {RCS_HOST}:{RCS_PORT}")  # Debug
+            logger.debug(f"Connecting to RCS at {RCS_HOST}:{RCS_PORT}")
             s.connect((RCS_HOST, RCS_PORT))
-            print(f"[{time.time()}] Connected to RCS")  # Debug
-            print(f"[{time.time()}] Sending command to RCS: {command_json}")  # Debug
+            logger.debug(f"Connected to RCS")
+            logger.debug(f"Sending command to RCS: {command_json}")
             s.sendall(command_json.encode('utf-8'))  # Send the JSON string, encoded
-            print(f"[{time.time()}] Command sent to RCS")  # Debug
+            logger.debug(f"Command sent to RCS")
             response = s.recv(1024)
             response_str = response.decode('utf-8')
-            print(f"[{time.time()}] Received response from RCS: {response_str}")  # Debug
+            logger.debug(f"Received response from RCS: {response_str}")
+            
+            # Add the command type to the response for client-side tracking
+            try:
+                cmd_data = json.loads(command_json)
+                resp_data = json.loads(response_str)
+                if "command" in cmd_data and "command" not in resp_data:
+                    resp_data["command"] = cmd_data["command"]
+                    response_str = json.dumps(resp_data)
+            except Exception as e:
+                logger.error(f"Error enhancing response with command: {e}")
+                
             return response_str
     except ConnectionRefusedError:
-        print(f"[{time.time()}] Error: Robot Control Service not running.")  # Debug
+        logger.error(f"Error: Robot Control Service not running.")
         return '{"success": false, "message": "Error: Robot Control Service not running."}'  # Return JSON
     except Exception as e:
-        print(f"[{time.time()}] Error in send_command_to_rcs: {e}")  # Debug
+        logger.error(f"Error in send_command_to_rcs: {e}")
         return json.dumps({"success": False, "message": f"Error: {e}"})  # Return JSON
 
 
@@ -131,6 +208,33 @@ def validate_command(data):
         # No additional validation needed for stop_all
         pass
     
+    # Validate start_logging command
+    elif command_type == "start_logging":
+        if "action_name" not in data:
+            return False, "start_logging command requires 'action_name' field"
+        
+        # Optional timeout validation
+        if "timeout" in data and not isinstance(data["timeout"], (int, float)):
+            return False, "Timeout value must be a number"
+            
+        # Optional video_sources validation
+        if "video_sources" in data:
+            if not isinstance(data["video_sources"], list):
+                return False, "video_sources must be an array"
+                
+            for source in data["video_sources"]:
+                if not isinstance(source, dict):
+                    return False, "Each video source must be an object"
+                if "source" not in source:
+                    return False, "Each video source requires a 'source' field"
+                if "method" in source and source["method"] not in ["stream", "opencv"]:
+                    return False, "Video source method must be 'stream' or 'opencv'"
+    
+    # Validate stop_logging command
+    elif command_type == "stop_logging":
+        # No additional validation needed for stop_logging
+        pass
+    
     else:
         return False, f"Unknown command: {command_type}"
     
@@ -140,26 +244,26 @@ def validate_command(data):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print(f"[{time.time()}] Client connected to WebSocket server on port {WS_PORT}")
+    logger.info(f"Client connected to WebSocket server on port {WS_PORT}")
     
     try:
         while True:
             try:
                 # Set a timeout for receiving messages
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                print(f"[{time.time()}] Raw received command: {data}")
+                logger.debug(f"Raw received command: {data}")
 
                 # Try to parse the JSON
                 try:
                     parsed_data = json.loads(data)
-                    print(f"[{time.time()}] Parsed command: {parsed_data}")
+                    logger.debug(f"Parsed command: {parsed_data}")
                 except json.JSONDecodeError as json_err:
                     error_response = json.dumps({
                         "success": False, 
                         "message": f"Invalid JSON: {str(json_err)}",
                         "received_data": data
                     })
-                    print(f"[{time.time()}] JSON Decode Error: {error_response}")
+                    logger.warning(f"JSON Decode Error: {error_response}")
                     await websocket.send_text(error_response)
                     continue
 
@@ -171,7 +275,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "message": error_message,
                         "received_data": parsed_data
                     })
-                    print(f"[{time.time()}] Invalid command: {error_response}")
+                    logger.warning(f"Invalid command: {error_response}")
                     await websocket.send_text(error_response)
                     continue
 
@@ -180,7 +284,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 # Run send_command_to_rcs in a thread pool
                 response = await run_in_threadpool(send_command_to_rcs, data_for_rcs)
-                print(f"[{time.time()}] Sending response to client: {response}")
+                logger.debug(f"Sending response to client: {response}")
                 await websocket.send_text(response)  # Send the raw JSON string back
 
             except asyncio.TimeoutError:
@@ -190,16 +294,16 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "ping",
                         "timestamp": time.time()
                     }))
-                    print(f"[{time.time()}] Sent ping to keep connection alive")
+                    logger.debug(f"Sent ping to keep connection alive")
                 except Exception as ping_err:
-                    print(f"[{time.time()}] Error sending ping: {ping_err}")
+                    logger.error(f"Error sending ping: {ping_err}")
                     break
             except Exception as inner_err:
                 error_response = json.dumps({
                     "success": False, 
                     "message": f"Unexpected error processing command: {str(inner_err)}"
                 })
-                print(f"[{time.time()}] Inner loop error: {error_response}")
+                logger.error(f"Inner loop error: {error_response}")
                 try:
                     await websocket.send_text(error_response)
                 except Exception:
@@ -207,9 +311,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
 
     except WebSocketDisconnect:
-        print(f"[{time.time()}] Client disconnected from WebSocket server")
+        logger.info(f"Client disconnected from WebSocket server")
     except Exception as e:
-        print(f"[{time.time()}] WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
     finally:
         # Ensure cleanup happens
         try:
@@ -220,7 +324,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    print(f"Starting WebSocket server on port {WS_PORT}...")
-    print(f"Valid motors: {VALID_MOTORS}")
-    print(f"Valid directions: {VALID_DIRECTIONS}")
+    logger.info(f"Starting WebSocket server on port {WS_PORT}...")
+    logger.info(f"Valid motors: {VALID_MOTORS}")
+    logger.info(f"Valid directions: {VALID_DIRECTIONS}")
     uvicorn.run(app, host="0.0.0.0", port=WS_PORT, reload=True)  # Added reload for convenience

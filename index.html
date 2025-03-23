@@ -272,6 +272,12 @@
     // Fix key mappings to match websocket_server.py expectations
     // The server expects "inc"/"dec" for directions, not "left"/"right"/"up"/"down"
     document.addEventListener('keydown', (event) => {
+        // Skip if focus is on an input element
+        if (document.activeElement.tagName === 'INPUT' || 
+            document.activeElement.tagName === 'TEXTAREA') {
+            return;
+        }
+
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
             event.preventDefault();
         }
@@ -309,6 +315,12 @@
     });
 
     document.addEventListener('keyup', (event) => {
+        // Skip if focus is on an input element
+        if (document.activeElement.tagName === 'INPUT' || 
+            document.activeElement.tagName === 'TEXTAREA') {
+            return;
+        }
+        
         pressedKeys[event.key] = false;
         currentCommandDisplay.innerText = `Current Command: None`;
 
