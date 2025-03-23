@@ -5,7 +5,7 @@
     <style>
         body { font-family: sans-serif; display: flex; }
         #video-container { flex: 1; }
-        #controls { width: 250px; padding: 10px; border-left: 1px solid #ccc; }
+        #controls { width: 300px; padding: 10px; border-left: 1px solid #ccc; }
         #status { margin-top: 10px; }
         #messages { margin-top: 10px; font-weight: bold; }
         #gamepadStatus { margin-top: 10px; font-weight: bold; }
@@ -23,6 +23,38 @@
         #error-display {
             margin-top: 10px;
             color: red;
+            font-weight: bold;
+        }
+        #logging-controls {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+        }
+        #logging-controls h3 {
+            margin-top: 0;
+        }
+        #logging-controls input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 8px;
+            padding: 5px;
+        }
+        #logging-controls button {
+            margin-top: 5px;
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+        }
+        #logging-controls button.stop-logging {
+            background-color: #f44336;
+        }
+        #logging-status {
+            margin-top: 8px;
             font-weight: bold;
         }
     </style>
@@ -50,6 +82,17 @@
                 <li><strong>Stop All:</strong> Spacebar</li>
             </ul>
         </div>
+
+        <!-- New Logging Controls Section -->
+        <div id="logging-controls">
+            <h3>Data Logging</h3>
+            <input type="text" id="action-name" placeholder="Action Name (e.g., pick_and_place)">
+            <input type="text" id="action-description" placeholder="Description of the action">
+            <input type="number" id="timeout" placeholder="Timeout in seconds (optional)" min="1">
+            <button id="logging-button" class="start-logging">Start Logging</button>
+            <div id="logging-status">Logging: Inactive</div>
+        </div>
+
         <div id="current-command">Current Command: None</div>
         <div id="error-display"></div>
         <div id="command-history"></div>
@@ -65,6 +108,7 @@
     let reconnectInterval = 1000; // Initial reconnect delay (1 second)
     let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
     let reconnectTimeout;
+    let isLogging = false; // Track logging state
     
     // Updated to use dynamic hostname instead of hardcoded "robot"
     const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
@@ -88,6 +132,17 @@
         socket.onmessage = (event) => {
             document.getElementById('messages').innerText = event.data;
             addToCommandHistory("Received: " + event.data);
+            
+            // Handle responses for logging commands
+            try {
+                const response = JSON.parse(event.data);
+                if (response.hasOwnProperty('command') && 
+                    (response.command === 'start_logging' || response.command === 'stop_logging')) {
+                    updateLoggingStatus(response);
+                }
+            } catch (e) {
+                // Not JSON or doesn't have expected structure - ignore
+            }
         };
 
         socket.onclose = (event) => {
@@ -122,6 +177,76 @@
         //Don't call connect socket directly. Call scheduleReconnect.
         scheduleReconnect(); // Manually trigger a reconnect attempt
     });
+
+    // Logging controls functionality
+    document.getElementById('logging-button').addEventListener('click', function() {
+        if (!socketReady) {
+            errorDisplay.innerText = "Cannot send command: Socket not connected.";
+            return;
+        }
+        
+        if (isLogging) {
+            // Stop logging
+            const command = {
+                command: 'stop_logging'
+            };
+            sendCommand(command);
+        } else {
+            // Start logging
+            const actionName = document.getElementById('action-name').value.trim();
+            const description = document.getElementById('action-description').value.trim();
+            const timeout = document.getElementById('timeout').value;
+            
+            if (!actionName) {
+                errorDisplay.innerText = "Please enter an action name for logging.";
+                return;
+            }
+            
+            const command = {
+                command: 'start_logging',
+                action_name: actionName,
+                description: description
+            };
+            
+            if (timeout) {
+                command.timeout = parseInt(timeout);
+            }
+            
+            // Add video source information
+            command.video_sources = [
+                {
+                    source: VIDEO_STREAM_URL,
+                    method: 'stream',
+                    camera_id: 0
+                }
+            ];
+            
+            sendCommand(command);
+        }
+    });
+    
+    function updateLoggingStatus(response) {
+        const loggingStatus = document.getElementById('logging-status');
+        const loggingButton = document.getElementById('logging-button');
+        
+        if (response.command === 'start_logging') {
+            if (response.success) {
+                isLogging = true;
+                loggingStatus.innerText = `Logging: Active - ${response.message}`;
+                loggingButton.innerText = 'Stop Logging';
+                loggingButton.classList.remove('start-logging');
+                loggingButton.classList.add('stop-logging');
+            } else {
+                loggingStatus.innerText = `Logging Error: ${response.message}`;
+            }
+        } else if (response.command === 'stop_logging') {
+            isLogging = false;
+            loggingStatus.innerText = `Logging: Inactive - ${response.message}`;
+            loggingButton.innerText = 'Start Logging';
+            loggingButton.classList.remove('stop-logging');
+            loggingButton.classList.add('start-logging');
+        }
+    }
 
     const pressedKeys = {}; // Keep track of pressed keys
 
