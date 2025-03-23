@@ -1,0 +1,21 @@
+[Unit]
+Description=Robot WebSocket Server
+After=network.target robot_arm_control.service
+Requires=robot_arm_control.service
+
+[Service]
+Type=simple
+User=pi
+Group=www-data
+WorkingDirectory=/var/www/robot
+#ExecStart=/usr/bin/uvicorn websocket_server:app --host 0.0.0.0 --port 8000
+ExecStart=/usr/bin/python3 -m uvicorn websocket_server:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+MemoryMax=200M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-websocket
+
+[Install]
+WantedBy=multi-user.target

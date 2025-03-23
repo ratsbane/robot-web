@@ -1,0 +1,102 @@
+#!/bin/bash
+# start-local
+# Script to start all necessary services for the robot control interface
+# Run with sudo: sudo ./start-local.sh
+
+# Define colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Function to check if running as root
+check_root() {
+    if [ "$(id -u)" != "0" ]; then
+        echo -e "${RED}Error: This script must be run as root (use sudo)${NC}"
+        exit 1
+    fi
+}
+
+# Function to start a service and check its status
+start_service() {
+    local service_name=$1
+    echo -e "${YELLOW}Starting $service_name...${NC}"
+    systemctl start $service_name
+    
+    # Check status
+    if systemctl is-active --quiet $service_name; then
+        echo -e "${GREEN}✓ $service_name is running${NC}"
+    else
+        echo -e "${RED}✗ Failed to start $service_name${NC}"
+        systemctl status $service_name
+    fi
+}
+
+# Function to start a process in the background
+start_process() {
+    local cmd=$1
+    local process_name=$2
+    local log_file=$3
+    
+    echo -e "${YELLOW}Starting $process_name...${NC}"
+    
+    # Check if process is already running
+    if pgrep -f "$process_name" > /dev/null; then
+        echo -e "${YELLOW}⚠ $process_name is already running${NC}"
+        return
+    fi
+    
+    # Start the process, redirect output to log file
+    $cmd > $log_file 2>&1 &
+    
+    # Get the PID
+    local pid=$!
+    
+    # Wait a moment to ensure process started
+    sleep 2
+    
+    # Check if process is still running
+    if ps -p $pid > /dev/null; then
+        echo -e "${GREEN}✓ $process_name started (PID: $pid)${NC}"
+        echo $pid > /var/run/$process_name.pid
+    else
+        echo -e "${RED}✗ Failed to start $process_name${NC}"
+        cat $log_file
+    fi
+}
+
+# Main execution starts here
+echo "========================================"
+echo "  Robot Control System Startup Script"
+echo "========================================"
+
+# Check if running as root
+check_root
+
+# Create log directory if it doesn't exist
+mkdir -p /var/log/robot
+
+# 1. Start the robot arm control service
+start_service robot_arm_control.service
+
+# 2. Start the robot WebSocket service
+start_service robot_websocket.service
+
+# 3. Start the video streaming server
+start_process "python3 /var/www/robot/python_stream_server.py" "python_stream_server" "/var/log/robot/video_stream.log"
+
+# 4. Start the web server
+start_process "python3 -m http.server 80 --directory /var/www/robot" "http.server" "/var/log/robot/web_server.log"
+
+echo "========================================"
+echo "All services started. Access the robot interface at:"
+echo "http://$(hostname -I | awk '{print $1}')"
+echo "========================================"
+echo "Press Ctrl+C to stop all services"
+echo "========================================"
+
+# Wait for Ctrl+C
+trap 'echo -e "${YELLOW}Shutting down services...${NC}"; pkill -f "python_stream_server"; pkill -f "http.server"; echo -e "${GREEN}Shutdown complete${NC}"; exit 0' INT
+while true; do
+    sleep 1
+done

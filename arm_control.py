@@ -269,18 +269,6 @@ class MotorController:
         }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
     def stop_motor(self, motor_id, motor_name):
         """Stops a specific motor by setting its goal position to its current position."""
         current_pos_result = self.packet_handler.ReadPos(motor_id)

@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Arm Control Interface</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --accent-color: #e74c3c;
+            --text-color: #333;
+            --light-bg: #f5f5f5;
+            --dark-bg: #34495e;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            color: var(--text-color);
+            background-color: var(--light-bg);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 1rem;
+            text-align: center;
+        }
+        
+        .main-content {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .video-container {
+            flex: 1;
+            min-width: 300px;
+            background-color: #000;
+            border-radius: 5px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .video-stream {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .control-panel {
+            flex: 1;
+            min-width: 300px;
+            background-color: white;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .connection-status {
+            background-color: var(--light-bg);
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            background-color: var(--accent-color);
+        }
+        
+        .connected {
+            background-color: #2ecc71;
+        }
+        
+        .motor-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .motor-group {
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            padding: 15px;
+        }
+        
+        .motor-title {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            color: var(--primary-color);
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        
+        .move-button {
+            background-color: var(--secondary-color);
+            color: white;
+        }
+        
+        .move-button:hover {
+            background-color: #2980b9;
+        }
+        
+        .stop-button {
+            background-color: var(--accent-color);
+            color: white;
+        }
+        
+        .stop-button:hover {
+            background-color: #c0392b;
+        }
+        
+        .stop-all-button {
+            background-color: var(--accent-color);
+            color: white;
+            padding: 12px;
+            font-size: 1.1rem;
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .stop-all-button:hover {
+            background-color: #c0392b;
+        }
+        
+        .log-container {
+            margin-top: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            padding: 10px;
+            background-color: var(--light-bg);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        
+        .sent {
+            color: var(--secondary-color);
+        }
+        
+        .received {
+            color: #2ecc71;
+        }
+        
+        .error {
+            color: var(--accent-color);
+        }
+        
+        .disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+            }
+            
+            .video-container, .control-panel {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Robot Arm Control</h1>
+    </header>
+    
+    <div class="container">
+        <div class="main-content">
+            <div class="video-container">
+                <img id="video-stream" class="video-stream" src="http://192.168.2.168:5000/video_feed" alt="Robot Camera Stream">
+            </div>
+            
+            <div class="control-panel">
+                <div class="connection-status">
+                    <div>
+                        <span id="status-indicator" class="status-indicator"></span>
+                        <span id="status-text">Disconnected</span>
+                    </div>
+                    <button id="connect-button">Connect</button>
+                </div>
+                
+                <div class="motor-controls">
+                    <div class="motor-group">
+                        <h3 class="motor-title">Base</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="base" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="base" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="base">Stop</button>
+                        </div>
+                    </div>
+                    
+                    <div class="motor-group">
+                        <h3 class="motor-title">Shoulder</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="shoulder" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="shoulder" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="shoulder">Stop</button>
+                        </div>
+                    </div>
+                    
+                    <div class="motor-group">
+                        <h3 class="motor-title">Elbow</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="elbow" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="elbow" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="elbow">Stop</button>
+                        </div>
+                    </div>
+                    
+                    <div class="motor-group">
+                        <h3 class="motor-title">Wrist</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="wrist" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="wrist" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="wrist">Stop</button>
+                        </div>
+                    </div>
+                    
+                    <div class="motor-group">
+                        <h3 class="motor-title">Hand</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="hand" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="hand" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="hand">Stop</button>
+                        </div>
+                    </div>
+                    
+                    <div class="motor-group">
+                        <h3 class="motor-title">Thumb</h3>
+                        <div class="button-group">
+                            <button class="move-button" data-motor="thumb" data-direction="inc">+</button>
+                            <button class="move-button" data-motor="thumb" data-direction="dec">-</button>
+                            <button class="stop-button" data-motor="thumb">Stop</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="stop-all-button" class="stop-all-button">STOP ALL MOTORS</button>
+                
+                <div class="log-container">
+                    <div id="log"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
+        const VIDEO_STREAM_URL = 'http://' + window.location.hostname + ':5000/video_feed';
+        
+        // DOM Elements
+        const connectButton = document.getElementById('connect-button');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const stopAllButton = document.getElementById('stop-all-button');
+        const logContainer = document.getElementById('log');
+        const videoElement = document.getElementById('video-stream');
+        
+        // Initialize WebSocket
+        let socket = null;
+        let isConnected = false;
+        
+        // Initialize video stream
+        function initVideoStream() {
+            // Set the video source to our streaming service
+            videoElement.src = VIDEO_STREAM_URL;
+            
+            // Handle load errors
+            videoElement.onerror = function() {
+                log('Error loading video stream', 'error');
+                
+                // Try to reload after a delay
+                setTimeout(function() {
+                    videoElement.src = VIDEO_STREAM_URL + '?reload=' + new Date().getTime();
+                }, 5000);
+            };
+        }
+        
+        // Log function
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Update connection status UI
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            if (connected) {
+                statusIndicator.classList.add('connected');
+                statusText.textContent = 'Connected';
+                connectButton.textContent = 'Disconnect';
+            } else {
+                statusIndicator.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+                connectButton.textContent = 'Connect';
+            }
+        }
+        
+        // Connect to WebSocket
+        function connect() {
+            if (socket) {
+                socket.close();
+                return;
+            }
+            
+            try {
+                socket = new WebSocket(WS_SERVER);
+                
+                socket.onopen = () => {
+                    updateConnectionStatus(true);
+                    log('Connected to robot control service', 'info');
+                    enableControls(true);
+                };
+                
+                socket.onmessage = (event) => {
+                    log(`Received: ${event.data}`, 'received');
+                    
+                    // Parse the response
+                    try {
+                        const response = JSON.parse(event.data);
+                        if (response.type === 'ping') {
+                            // No need to log pings
+                            return;
+                        }
+                        
+                        if (!response.success) {
+                            log(`Error: ${response.message}`, 'error');
+                        }
+                    } catch (e) {
+                        log(`Error parsing response: ${e}`, 'error');
+                    }
+                };
+                
+                socket.onclose = () => {
+                    updateConnectionStatus(false);
+                    log('Disconnected from robot control service', 'info');
+                    enableControls(false);
+                    socket = null;
+                };
+                
+                socket.onerror = (error) => {
+                    log(`WebSocket Error: ${error}`, 'error');
+                };
+            } catch (error) {
+                log(`Connection Error: ${error}`, 'error');
+            }
+        }
+        
+        // Enable/disable control buttons
+        function enableControls(enabled) {
+            const buttons = document.querySelectorAll('.move-button, .stop-button, #stop-all-button');
+            buttons.forEach(button => {
+                button.disabled = !enabled;
+                if (enabled) {
+                    button.classList.remove('disabled');
+                } else {
+                    button.classList.add('disabled');
+                }
+            });
+        }
+        
+        // Send command to robot
+        function sendCommand(command) {
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                log('Not connected to robot control service', 'error');
+                return;
+            }
+            
+            const commandStr = JSON.stringify(command);
+            socket.send(commandStr);
+            log(`Sent: ${commandStr}`, 'sent');
+        }
+        
+        // Event Listeners
+        
+        // Connect button
+        connectButton.addEventListener('click', connect);
+        
+        // Move buttons
+        document.querySelectorAll('.move-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const motor = button.getAttribute('data-motor');
+                const direction = button.getAttribute('data-direction');
+                
+                sendCommand({
+                    command: 'move',
+                    motor: motor,
+                    direction: direction,
+                    speed: 50 // Default speed
+                });
+            });
+        });
+        
+        // Stop buttons
+        document.querySelectorAll('.stop-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const motor = button.getAttribute('data-motor');
+                
+                sendCommand({
+                    command: 'stop',
+                    motor: motor
+                });
+            });
+        });
+        
+        // Stop All button
+        stopAllButton.addEventListener('click', () => {
+            sendCommand({
+                command: 'stop_all'
+            });
+        });
+        
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            log('Robot Control Interface Loaded', 'info');
+            log(`WebSocket Server: ${WS_SERVER}`, 'info');
+            log(`Video Stream: ${VIDEO_STREAM_URL}`, 'info');
+            
+            // Initially disable controls
+            enableControls(false);
+            
+            // Initialize video stream
+            initVideoStream();
+        });
+    </script>
+</body>
+</html>

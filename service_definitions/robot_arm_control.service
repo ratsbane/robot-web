@@ -1,0 +1,19 @@
+[Unit]
+Description=Robot Arm Control Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=www-data
+WorkingDirectory=/var/www/robot
+ExecStart=/usr/bin/python3 /var/www/robot/robot_control_service.py
+Restart=always
+RestartSec=5
+MemoryMax=200M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=robot-control
+
+[Install]
+WantedBy=multi-user.target

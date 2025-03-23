@@ -1,6 +1,8 @@
+#!/usr/bin/python3
+
 import socket
 import time
-# --- Add these lines at the VERY TOP ---
+
 import os
 import sys
 import json
@@ -54,29 +56,29 @@ command_queue = [] # List for commands  # Use a list as a simple queue
 current_moving_motor = None  # Keep track of the currently moving motor
 
 def handle_client(conn, addr):
-    print(f"[{time.time()}] Connected by {addr}")  # Timestamp
+    #print(f"[{time.time()}] Connected by {addr}")  # Timestamp
     with conn:
         while True:
             try:
-                print(f"[{time.time()}] Waiting to receive data...")
+                #print(f"[{time.time()}] Waiting to receive data...")
                 data = conn.recv(1024)  # Receive data from the client
                 print(f"[{time.time()}] Data received: {data}")
                 if not data:
-                    print(f"[{time.time()}] No data received. Breaking.")
+                    #print(f"[{time.time()}] No data received. Breaking.")
                     break  # Client disconnected
                 try:
                     command = json.loads(data.decode('utf-8').strip()) #Expect a JSON
                 except:
                     conn.sendall(b"Error: Invalid JSON format")
                     continue
-                print(f"[{time.time()}] Received command: {command}")
+                #print(f"[{time.time()}] Received command: {command}")
 
                 command_queue.append(command) #Put command on the queue.
                 result = {"success":True, "message": "Command received"} #Always send a JSON repsonse
                 conn.sendall(json.dumps(result).encode('utf-8'))
 
             except ConnectionResetError:
-                print(f"[{time.time()}] Client disconnected unexpectedly")
+                #print(f"[{time.time()}] Client disconnected unexpectedly")
                 break
             except Exception as e:
                 print(f"[{time.time()}] Error handling client: {e}")
@@ -91,7 +93,7 @@ def process_commands():
     while True:
         if len(command_queue) > 0:  # Always process commands if they exist
             command = command_queue.pop(0)  # Get the next command
-            print(f"[{time.time()}] Processing command: {command}")
+            #print(f"[{time.time()}] Processing command: {command}")
 
             motor_name = command.get('motor')
             motor_id = None

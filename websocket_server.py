@@ -1,11 +1,9 @@
-
-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import socket
 import asyncio
-from starlette.concurrency import run_in_threadpool  # Import
+from starlette.concurrency import run_in_threadpool
 import time
-import json  # Import json
+import json
 
 # WebSocket command protocol (from web page to websocket_server.py):
 # All commands are JSON objects.
@@ -20,7 +18,7 @@ import json  # Import json
 #   - Starts continuous movement of the specified motor.
 #   - <motor_name>: "base", "shoulder", "elbow", "wrist", "hand", or "thumb".
 #   - <direction>: "inc" (increase) or "dec" (decrease).
-#   - <speed_value>: (Optional) Integer representing the speed.  If omitted, a default speed is used.
+#   - <speed_value>: (Optional) Integer representing the speed. If omitted, a default speed is used.
 #
 # {
 #   "command": "move_to",
@@ -43,7 +41,11 @@ import json  # Import json
 # {
 #   "command": "stop_all"
 # }
-#   - Stops all motors.  No additional parameters.
+#   - Stops all motors. No additional parameters.
+#
+# Connection Maintenance:
+# The WebSocket server sends pings to keep the connection alive during periods of inactivity.
+# This helps prevent timeouts and ensures the connection remains stable.
 
 
 app = FastAPI()
@@ -52,6 +54,10 @@ app = FastAPI()
 RCS_HOST = 'localhost'
 RCS_PORT = 9000
 WS_PORT = 8000  # WebSocket server port
+
+# List of valid motors and directions
+VALID_MOTORS = ["base", "shoulder", "elbow", "wrist", "hand", "thumb"]
+VALID_DIRECTIONS = ["inc", "dec"]
 
 
 def send_command_to_rcs(command_json: str) -> str:
@@ -63,7 +69,7 @@ def send_command_to_rcs(command_json: str) -> str:
             s.connect((RCS_HOST, RCS_PORT))
             print(f"[{time.time()}] Connected to RCS")  # Debug
             print(f"[{time.time()}] Sending command to RCS: {command_json}")  # Debug
-            s.sendall(command_json.encode('utf-8')) # Send the JSON string, encoded
+            s.sendall(command_json.encode('utf-8'))  # Send the JSON string, encoded
             print(f"[{time.time()}] Command sent to RCS")  # Debug
             response = s.recv(1024)
             response_str = response.decode('utf-8')
@@ -71,10 +77,64 @@ def send_command_to_rcs(command_json: str) -> str:
             return response_str
     except ConnectionRefusedError:
         print(f"[{time.time()}] Error: Robot Control Service not running.")  # Debug
-        return '{"success": false, "message": "Error: Robot Control Service not running."}' #Return JSON
+        return '{"success": false, "message": "Error: Robot Control Service not running."}'  # Return JSON
     except Exception as e:
         print(f"[{time.time()}] Error in send_command_to_rcs: {e}")  # Debug
-        return json.dumps({"success": false, "message": f"Error: {e}"}) #Return JSON
+        return json.dumps({"success": False, "message": f"Error: {e}"})  # Return JSON
+
+
+def validate_command(data):
+    """Validates command structure and returns (is_valid, error_message)"""
+    if not isinstance(data, dict):
+        return False, "Command must be a JSON object"
+    
+    if "command" not in data:
+        return False, "Missing 'command' field"
+    
+    command_type = data.get("command")
+    
+    # Validate move command
+    if command_type == "move":
+        if "motor" not in data:
+            return False, "Move command requires 'motor' field"
+        if "direction" not in data:
+            return False, "Move command requires 'direction' field"
+        if data["motor"] not in VALID_MOTORS:
+            return False, f"Invalid motor. Must be one of: {VALID_MOTORS}"
+        if data["direction"] not in VALID_DIRECTIONS:
+            return False, f"Invalid direction. Must be one of: {VALID_DIRECTIONS}"
+        if "speed" in data and not isinstance(data["speed"], (int, float)):
+            return False, "Speed value must be a number"
+    
+    # Validate move_to command
+    elif command_type == "move_to":
+        if "motor" not in data:
+            return False, "Move_to command requires 'motor' field"
+        if "position" not in data:
+            return False, "Move_to command requires 'position' field"
+        if data["motor"] not in VALID_MOTORS:
+            return False, f"Invalid motor. Must be one of: {VALID_MOTORS}"
+        if not isinstance(data["position"], (int, float)):
+            return False, "Position value must be a number"
+        if "speed" in data and not isinstance(data["speed"], (int, float)):
+            return False, "Speed value must be a number"
+    
+    # Validate stop command
+    elif command_type == "stop":
+        if "motor" not in data:
+            return False, "Stop command requires 'motor' field"
+        if data["motor"] not in VALID_MOTORS:
+            return False, f"Invalid motor. Must be one of: {VALID_MOTORS}"
+    
+    # Validate stop_all command
+    elif command_type == "stop_all":
+        # No additional validation needed for stop_all
+        pass
+    
+    else:
+        return False, f"Unknown command: {command_type}"
+    
+    return True, None
 
 
 @app.websocket("/ws")
@@ -104,39 +164,16 @@ async def websocket_endpoint(websocket: WebSocket):
                     continue
 
                 # Validate command structure
-                if not isinstance(parsed_data, dict):
+                is_valid, error_message = validate_command(parsed_data)
+                if not is_valid:
                     error_response = json.dumps({
                         "success": False, 
-                        "message": "Command must be a JSON object",
-                        "received_data": data
+                        "message": error_message,
+                        "received_data": parsed_data
                     })
-                    print(f"[{time.time()}] Invalid command format: {error_response}")
+                    print(f"[{time.time()}] Invalid command: {error_response}")
                     await websocket.send_text(error_response)
                     continue
-
-                # Validate required fields based on the command type
-                valid_motors = ["base", "shoulder", "elbow", "wrist", "hand", "thumb"]
-                
-                if parsed_data.get("command") == "move":
-                    if "motor" not in parsed_data or "direction" not in parsed_data:
-                        error_response = json.dumps({
-                            "success": False, 
-                            "message": "Move command requires 'motor' and 'direction'",
-                            "received_data": parsed_data
-                        })
-                        print(f"[{time.time()}] Invalid move command: {error_response}")
-                        await websocket.send_text(error_response)
-                        continue
-                    
-                    if parsed_data["motor"] not in valid_motors:
-                        error_response = json.dumps({
-                            "success": False, 
-                            "message": f"Invalid motor. Must be one of: {valid_motors}",
-                            "received_data": parsed_data
-                        })
-                        print(f"[{time.time()}] Invalid motor: {error_response}")
-                        await websocket.send_text(error_response)
-                        continue
 
                 # Convert command to JSON string for RCS
                 data_for_rcs = json.dumps(parsed_data)
@@ -144,7 +181,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Run send_command_to_rcs in a thread pool
                 response = await run_in_threadpool(send_command_to_rcs, data_for_rcs)
                 print(f"[{time.time()}] Sending response to client: {response}")
-                await websocket.send_text(response) # Send the raw JSON string back
+                await websocket.send_text(response)  # Send the raw JSON string back
 
             except asyncio.TimeoutError:
                 # Send a ping to keep the connection alive
@@ -153,6 +190,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "ping",
                         "timestamp": time.time()
                     }))
+                    print(f"[{time.time()}] Sent ping to keep connection alive")
                 except Exception as ping_err:
                     print(f"[{time.time()}] Error sending ping: {ping_err}")
                     break
@@ -179,90 +217,10 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception:
             pass
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    print(f"[{time.time()}] Client connected to WebSocket server on port {WS_PORT}")
-    try:
-        while True:
-            try:
-                # Receive the raw text
-                data = await websocket.receive_text()
-                print(f"[{time.time()}] Raw received command: {data}")
-
-                # Try to parse the JSON
-                try:
-                    parsed_data = json.loads(data)
-                    print(f"[{time.time()}] Parsed command: {parsed_data}")
-                except json.JSONDecodeError as json_err:
-                    error_response = json.dumps({
-                        "success": False, 
-                        "message": f"Invalid JSON: {str(json_err)}",
-                        "received_data": data
-                    })
-                    print(f"[{time.time()}] JSON Decode Error: {error_response}")
-                    await websocket.send_text(error_response)
-                    continue
-
-                # Validate command structure
-                if not isinstance(parsed_data, dict):
-                    error_response = json.dumps({
-                        "success": False, 
-                        "message": "Command must be a JSON object",
-                        "received_data": data
-                    })
-                    print(f"[{time.time()}] Invalid command format: {error_response}")
-                    await websocket.send_text(error_response)
-                    continue
-
-                # Validate required fields based on the command type
-                valid_motors = ["base", "shoulder", "elbow", "wrist", "hand", "thumb"]
-                
-                if parsed_data.get("command") == "move":
-                    if "motor" not in parsed_data or "direction" not in parsed_data:
-                        error_response = json.dumps({
-                            "success": False, 
-                            "message": "Move command requires 'motor' and 'direction'",
-                            "received_data": parsed_data
-                        })
-                        print(f"[{time.time()}] Invalid move command: {error_response}")
-                        await websocket.send_text(error_response)
-                        continue
-                    
-                    if parsed_data["motor"] not in valid_motors:
-                        error_response = json.dumps({
-                            "success": False, 
-                            "message": f"Invalid motor. Must be one of: {valid_motors}",
-                            "received_data": parsed_data
-                        })
-                        print(f"[{time.time()}] Invalid motor: {error_response}")
-                        await websocket.send_text(error_response)
-                        continue
-
-                # Convert command to JSON string for RCS
-                data_for_rcs = json.dumps(parsed_data)
-
-                # Run send_command_to_rcs in a thread pool
-                response = await run_in_threadpool(send_command_to_rcs, data_for_rcs)
-                print(f"[{time.time()}] Sending response to client: {response}")
-                await websocket.send_text(response) # Send the raw JSON string back
-
-            except Exception as inner_err:
-                error_response = json.dumps({
-                    "success": False, 
-                    "message": f"Unexpected error processing command: {str(inner_err)}"
-                })
-                print(f"[{time.time()}] Inner loop error: {error_response}")
-                await websocket.send_text(error_response)
-
-    except WebSocketDisconnect:
-        print(f"[{time.time()}] Client disconnected from WebSocket server")
-    except Exception as e:
-        print(f"[{time.time()}] WebSocket error: {e}")
-
-
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=WS_PORT, reload=True) # Added reload for convenience.
-
+    print(f"Starting WebSocket server on port {WS_PORT}...")
+    print(f"Valid motors: {VALID_MOTORS}")
+    print(f"Valid directions: {VALID_DIRECTIONS}")
+    uvicorn.run(app, host="0.0.0.0", port=WS_PORT, reload=True)  # Added reload for convenience
