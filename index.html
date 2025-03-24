@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Arm Control</title>
+    <style>
+        body { font-family: sans-serif; display: flex; }
+        #video-container { flex: 1; }
+        #controls { width: 300px; padding: 10px; border-left: 1px solid #ccc; }
+        #status { margin-top: 10px; }
+        #messages { margin-top: 10px; font-weight: bold; }
+        #gamepadStatus { margin-top: 10px; font-weight: bold; }
+        #key-guide { margin-top: 20px; }
+        #key-guide ul { list-style: none; padding: 0; }
+        #key-guide li { margin-bottom: 5px; }
+        #current-command { margin-top: 10px; font-weight: bold; color: blue; }
+        #command-history {
+            margin-top: 10px;
+            border: 1px solid #ccc;
+            height: 100px;
+            overflow-y: scroll;
+            padding: 5px;
+        }
+        #error-display {
+            margin-top: 10px;
+            color: red;
+            font-weight: bold;
+        }
+        #logging-controls {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background-color: #f9f9f9;
+        }
+        #logging-controls h3 {
+            margin-top: 0;
+        }
+        #logging-controls input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 8px;
+            padding: 5px;
+        }
+        #logging-controls button {
+            margin-top: 5px;
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+        }
+        #logging-controls button.stop-logging {
+            background-color: #f44336;
+        }
+        #logging-status {
+            margin-top: 8px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="video-container">
+        <h1>Robot Arm Control</h1>
+        <!-- Updated to use the new video stream URL -->
+        <img src="http://192.168.2.168:5000/video_feed" width="640" height="480" id="video-stream">
+        <div id="status"></div>
+        <div id="messages"></div>
+    </div>
+
+    <div id="controls">
+        <div id="gamepadStatus">Gamepad: Not Connected</div>
+        <div id="key-guide">
+            <h3>Key Controls:</h3>
+            <ul>
+                <li><strong>Base:</strong> Left/Right Arrows</li>
+                <li><strong>Shoulder:</strong> Up/Down Arrows</li>
+                <li><strong>Elbow:</strong> W/S</li>
+                <li><strong>Wrist:</strong> A/D</li>
+                <li><strong>Hand:</strong> Y/H</li>
+                <li><strong>Thumb:</strong> T/G</li>
+                <li><strong>Stop All:</strong> Spacebar</li>
+            </ul>
+        </div>
+
+        <!-- New Recording Controls Section -->
+        <div id="logging-controls">
+            <h3>Data Recording</h3>
+            <input type="text" id="action-name" placeholder="Action Name (e.g., pick_and_place)">
+            <input type="text" id="action-description" placeholder="Description of the action">
+            <input type="number" id="timeout" placeholder="Timeout in seconds (optional)" min="1">
+            <button id="logging-button" class="start-logging">Start Recording</button>
+            <div id="logging-status">Recording: Inactive</div>
+        </div>
+
+        <div id="current-command">Current Command: None</div>
+        <div id="error-display"></div>
+        <div id="command-history"></div>
+        <button id="reconnectButton">Reconnect</button>
+    </div>
+
+<script>
+    let socket;
+    let currentCommandDisplay = document.getElementById('current-command');
+    let commandHistoryDiv = document.getElementById('command-history');
+    let errorDisplay = document.getElementById('error-display');
+    let socketReady = false;
+    let reconnectInterval = 1000; // Initial reconnect delay (1 second)
+    let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
+    let reconnectTimeout;
+    let isLogging = false; // Track logging state
+    
+    // Updated to use dynamic hostname instead of hardcoded "robot"
+    const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
+    const VIDEO_STREAM_URL = 'http://' + window.location.hostname + ':5000/video_feed';
+    
+    // Update video stream source to use dynamic hostname
+    document.getElementById('video-stream').src = VIDEO_STREAM_URL;
+
+    function connectSocket() {
+        // Connect to the WebSocket server on port 8000
+        socket = new WebSocket(WS_SERVER);
+
+        socket.onopen = () => {
+            document.getElementById('status').innerText = 'Connected';
+            socketReady = true;
+            errorDisplay.innerText = ''; // Clear errors on successful connection
+            reconnectInterval = 1000; // Reset reconnect interval on successful connection
+            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
+        };
+
+    socket.onmessage = (event) => {
+            document.getElementById('messages').innerText = event.data;
+            addToCommandHistory("Received: " + event.data);
+            
+            // Handle responses for logging commands
+            try {
+                const response = JSON.parse(event.data);
+                console.log("Parsed response:", response);  // Debug
+                
+                // Check for logging command responses
+                if (response.hasOwnProperty('success')) {
+                    const commandType = response.command || "";
+                    
+                    if (commandType === 'start_logging') {
+                        if (response.success) {
+                            isLogging = true;
+                            loggingStatus.innerText = `Recording: Active - ${response.message}`;
+                            loggingButton.innerText = 'Stop Recording';
+                            loggingButton.classList.remove('start-logging');
+                            loggingButton.classList.add('stop-logging');
+                        } else {
+                            loggingStatus.innerText = `Recording Error: ${response.message}`;
+                            errorDisplay.innerText = `Recording Error: ${response.message}`;
+                        }
+                    } else if (commandType === 'stop_logging') {
+                        isLogging = false;
+                        loggingStatus.innerText = `Recording: Inactive - ${response.message}`;
+                        loggingButton.innerText = 'Start Recording';
+                        loggingButton.classList.remove('stop-logging');
+                        loggingButton.classList.add('start-logging');
+                    }
+                }
+            } catch (e) {
+                console.error("Error parsing response:", e, event.data);
+                addToCommandHistory("Error parsing response: " + e.message);
+            }
+        };
+
+        socket.onclose = (event) => {
+            document.getElementById('status').innerText = 'Disconnected';
+            socketReady = false;
+            console.log('WebSocket closed:', event);
+            scheduleReconnect(); // Attempt to reconnect
+        };
+
+        socket.onerror = (error) => {
+            errorDisplay.innerText = 'WebSocket Error: ' + error;
+            console.error('WebSocket error:', error);
+        };
+    }
+    
+    function scheduleReconnect() {
+        if (!socketReady) { // Only attempt reconnect if not already connected/connecting
+            reconnectTimeout = setTimeout(() => {
+                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
+                connectSocket();
+                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
+            }, reconnectInterval);
+        }
+    }
+
+    connectSocket(); // Initial connection
+
+    document.getElementById('reconnectButton').addEventListener('click', () => {
+        if (socket && socket.readyState !== WebSocket.CLOSED) {
+            socket.close(); // Close any existing connection first
+        }
+        //Don't call connect socket directly. Call scheduleReconnect.
+        scheduleReconnect(); // Manually trigger a reconnect attempt
+    });
+
+    // Logging controls functionality
+    const loggingButton = document.getElementById('logging-button');
+    const loggingStatus = document.getElementById('logging-status');
+    
+    loggingButton.addEventListener('click', function() {
+        if (!socketReady) {
+            errorDisplay.innerText = "Cannot send command: Socket not connected.";
+            return;
+        }
+        
+        if (isLogging) {
+            // Stop logging
+            const command = {
+                command: 'stop_logging'
+            };
+            sendCommand(command);
+        } else {
+            // Start logging
+            const actionName = document.getElementById('action-name').value.trim();
+            const description = document.getElementById('action-description').value.trim();
+            const timeout = document.getElementById('timeout').value;
+            
+            if (!actionName) {
+                errorDisplay.innerText = "Please enter an action name for logging.";
+                return;
+            }
+            
+            const command = {
+                command: 'start_logging',
+                action_name: actionName,
+                description: description
+            };
+            
+            if (timeout) {
+                command.timeout = parseInt(timeout);
+            }
+            
+            // Get current video stream URL or use fallback
+            const videoEl = document.getElementById('video-stream');
+            const videoUrl = videoEl ? videoEl.src : VIDEO_STREAM_URL;
+            
+            // Add video source information if video URL is available
+            if (videoUrl) {
+                command.video_sources = [
+                    {
+                        source: videoUrl,
+                        method: 'stream',
+                        camera_id: 0
+                    }
+                ];
+            }
+            
+            console.log("Sending logging command:", command);
+            sendCommand(command);
+        }
+    });
+    
+    function updateLoggingStatus(response) {
+        const loggingStatus = document.getElementById('logging-status');
+        const loggingButton = document.getElementById('logging-button');
+        
+        if (response.command === 'start_logging') {
+            if (response.success) {
+                isLogging = true;
+                loggingStatus.innerText = `Logging: Active - ${response.message}`;
+                loggingButton.innerText = 'Stop Logging';
+                loggingButton.classList.remove('start-logging');
+                loggingButton.classList.add('stop-logging');
+            } else {
+                loggingStatus.innerText = `Logging Error: ${response.message}`;
+            }
+        } else if (response.command === 'stop_logging') {
+            isLogging = false;
+            loggingStatus.innerText = `Logging: Inactive - ${response.message}`;
+            loggingButton.innerText = 'Start Logging';
+            loggingButton.classList.remove('stop-logging');
+            loggingButton.classList.add('start-logging');
+        }
+    }
+
+    const pressedKeys = {}; // Keep track of pressed keys
+
+    function sendCommand(command) {
+        if (socketReady) {
+            console.log("Sending command:", command);
+            socket.send(JSON.stringify(command)); //SEND THE JSON STRING
+            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
+            addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
+            
+            // Clear previous errors when sending a new command
+            if (command.command !== 'move' && command.command !== 'stop') {
+                errorDisplay.innerText = "";
+            }
+        } else {
+            errorDisplay.innerText = "Cannot send command: Socket not connected.";
+            console.log("Socket not ready, cannot send command:", command); // Log to console
+        }
+    }
+
+    function addToCommandHistory(entry) {
+        const commandElement = document.createElement('div');
+        commandElement.innerText = entry;
+        commandHistoryDiv.appendChild(commandElement);
+        commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
+    }
+
+    // Fix key mappings to match websocket_server.py expectations
+    // The server expects "inc"/"dec" for directions, not "left"/"right"/"up"/"down"
+    document.addEventListener('keydown', (event) => {
+        // Skip if focus is on an input element
+        if (document.activeElement.tagName === 'INPUT' || 
+            document.activeElement.tagName === 'TEXTAREA') {
+            return;
+        }
+
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault();
+        }
+
+        if (pressedKeys[event.key]) return; // Prevent repeated triggers
+        pressedKeys[event.key] = true;
+
+        // Prevent default browser behavior for all relevant keys
+        event.preventDefault();
+        event.stopPropagation();
+
+        let command = null;
+
+        // Updated to use inc/dec instead of directional names
+        switch (event.key) {
+            case 'ArrowLeft': command = { command: 'move', motor: 'base', direction: 'dec' }; break;
+            case 'ArrowRight': command = { command: 'move', motor: 'base', direction: 'inc' }; break;
+            case 'ArrowUp': command = { command: 'move', motor: 'shoulder', direction: 'inc' }; break;
+            case 'ArrowDown': command = { command: 'move', motor: 'shoulder', direction: 'dec' }; break;
+            case 'w': command = { command: 'move', motor: 'elbow', direction: 'inc' }; break;
+            case 's': command = { command: 'move', motor: 'elbow', direction: 'dec' }; break;
+            case 'a': command = { command: 'move', motor: 'wrist', direction: 'dec' }; break;
+            case 'd': command = { command: 'move', motor: 'wrist', direction: 'inc' }; break;
+            case 't': command = { command: 'move', motor: 'thumb', direction: 'inc' }; break;
+            case 'g': command = { command: 'move', motor: 'thumb', direction: 'dec' }; break;
+            case 'y': command = { command: 'move', motor: 'hand', direction: 'inc' }; break;
+            case 'h': command = { command: 'move', motor: 'hand', direction: 'dec' }; break;
+            case ' ': command = { command: 'stop_all' }; break; // Added spacebar for stop_all
+        }
+
+        if (command) {
+            sendCommand(command);
+            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
+        }
+    });
+
+    document.addEventListener('keyup', (event) => {
+        // Skip if focus is on an input element
+        if (document.activeElement.tagName === 'INPUT' || 
+            document.activeElement.tagName === 'TEXTAREA') {
+            return;
+        }
+        
+        pressedKeys[event.key] = false;
+        currentCommandDisplay.innerText = `Current Command: None`;
+
+        let command = null;
+
+        switch (event.key) {
+            case 'ArrowLeft':
+            case 'ArrowRight': command = { command: 'stop', motor: 'base' }; break;
+            case 'ArrowUp':
+            case 'ArrowDown': command = { command: 'stop', motor: 'shoulder' }; break;
+            case 'w':
+            case 's': command = { command: 'stop', motor: 'elbow' }; break;
+            case 'a':
+            case 'd': command = { command: 'stop', motor: 'wrist' }; break;
+            case 't':
+            case 'g': command = { command: 'stop', motor: 'thumb' }; break;
+            case 'y':
+            case 'h': command = { command: 'stop', motor: 'hand' }; break;
+        }
+
+        if (command) {
+            sendCommand(command);
+        }
+    });
+
+    // --- Gamepad Support ---
+    let gamepadIndex = null;
+
+    window.addEventListener("gamepadconnected", (event) => {
+        console.log("Gamepad connected:", event.gamepad);
+        gamepadIndex = event.gamepad.index;
+        document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
+        gameLoop(); // Start the game loop
+    });
+
+    window.addEventListener("gamepaddisconnected", (event) => {
+        console.log("Gamepad disconnected:", event.gamepad);
+        gamepadIndex = null;
+        document.getElementById('gamepadStatus').innerText = "Gamepad: Not Connected";
+    });
+
+    function gameLoop() {
+        if (gamepadIndex !== null) {
+            const gamepad = navigator.getGamepads()[gamepadIndex];
+            if (gamepad) {
+                // Left Joystick (Base and Shoulder)
+                const leftX = gamepad.axes[0];
+                const leftY = gamepad.axes[1];
+
+                // Updated to use inc/dec instead of left/right/up/down
+                if (Math.abs(leftX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'base', direction: leftX > 0 ? 'inc' : 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'base'});
+                }
+
+                if (Math.abs(leftY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'shoulder', direction: leftY > 0 ? 'dec' : 'inc'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'shoulder'});
+                }
+
+                // Right Joystick (Elbow and Wrist)
+                const rightX = gamepad.axes[3];
+                const rightY = gamepad.axes[4];
+
+                if (Math.abs(rightX) > 0.1) {
+                    sendCommand({command: 'move', motor: 'wrist', direction: rightX > 0 ? 'inc' : 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'wrist'});
+                }
+
+                if (Math.abs(rightY) > 0.1) {
+                    sendCommand({command: 'move', motor: 'elbow', direction: rightY > 0 ? 'dec' : 'inc'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'elbow'});
+                }
+
+                // Triggers (Hand and Thumb)
+                const leftTrigger = gamepad.buttons[6].value;
+                const rightTrigger = gamepad.buttons[7].value;
+
+                if (leftTrigger > 0.2) {
+                    sendCommand({command: 'move', motor: 'hand', direction: 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'hand'});
+                }
+                if (rightTrigger > 0.2) {
+                    sendCommand({command: 'move', motor: 'thumb', direction: 'dec'});
+                } else {
+                    sendCommand({command: 'stop', motor: 'thumb'});
+                }
+            }
+        }
+        requestAnimationFrame(gameLoop);
+    }
+</script>
+</body>
+</html>
