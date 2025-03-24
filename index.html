@@ -83,14 +83,14 @@
             </ul>
         </div>
 
-        <!-- New Logging Controls Section -->
+        <!-- New Recording Controls Section -->
         <div id="logging-controls">
-            <h3>Data Logging</h3>
+            <h3>Data Recording</h3>
             <input type="text" id="action-name" placeholder="Action Name (e.g., pick_and_place)">
             <input type="text" id="action-description" placeholder="Description of the action">
             <input type="number" id="timeout" placeholder="Timeout in seconds (optional)" min="1">
-            <button id="logging-button" class="start-logging">Start Logging</button>
-            <div id="logging-status">Logging: Inactive</div>
+            <button id="logging-button" class="start-logging">Start Recording</button>
+            <div id="logging-status">Recording: Inactive</div>
         </div>
 
         <div id="current-command">Current Command: None</div>
@@ -129,19 +129,41 @@
             clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
         };
 
-        socket.onmessage = (event) => {
+    socket.onmessage = (event) => {
             document.getElementById('messages').innerText = event.data;
             addToCommandHistory("Received: " + event.data);
             
             // Handle responses for logging commands
             try {
                 const response = JSON.parse(event.data);
-                if (response.hasOwnProperty('command') && 
-                    (response.command === 'start_logging' || response.command === 'stop_logging')) {
-                    updateLoggingStatus(response);
+                console.log("Parsed response:", response);  // Debug
+                
+                // Check for logging command responses
+                if (response.hasOwnProperty('success')) {
+                    const commandType = response.command || "";
+                    
+                    if (commandType === 'start_logging') {
+                        if (response.success) {
+                            isLogging = true;
+                            loggingStatus.innerText = `Recording: Active - ${response.message}`;
+                            loggingButton.innerText = 'Stop Recording';
+                            loggingButton.classList.remove('start-logging');
+                            loggingButton.classList.add('stop-logging');
+                        } else {
+                            loggingStatus.innerText = `Recording Error: ${response.message}`;
+                            errorDisplay.innerText = `Recording Error: ${response.message}`;
+                        }
+                    } else if (commandType === 'stop_logging') {
+                        isLogging = false;
+                        loggingStatus.innerText = `Recording: Inactive - ${response.message}`;
+                        loggingButton.innerText = 'Start Recording';
+                        loggingButton.classList.remove('stop-logging');
+                        loggingButton.classList.add('start-logging');
+                    }
                 }
             } catch (e) {
-                // Not JSON or doesn't have expected structure - ignore
+                console.error("Error parsing response:", e, event.data);
+                addToCommandHistory("Error parsing response: " + e.message);
             }
         };
 
@@ -179,7 +201,10 @@
     });
 
     // Logging controls functionality
-    document.getElementById('logging-button').addEventListener('click', function() {
+    const loggingButton = document.getElementById('logging-button');
+    const loggingStatus = document.getElementById('logging-status');
+    
+    loggingButton.addEventListener('click', function() {
         if (!socketReady) {
             errorDisplay.innerText = "Cannot send command: Socket not connected.";
             return;
@@ -212,15 +237,22 @@
                 command.timeout = parseInt(timeout);
             }
             
-            // Add video source information
-            command.video_sources = [
-                {
-                    source: VIDEO_STREAM_URL,
-                    method: 'stream',
-                    camera_id: 0
-                }
-            ];
+            // Get current video stream URL or use fallback
+            const videoEl = document.getElementById('video-stream');
+            const videoUrl = videoEl ? videoEl.src : VIDEO_STREAM_URL;
             
+            // Add video source information if video URL is available
+            if (videoUrl) {
+                command.video_sources = [
+                    {
+                        source: videoUrl,
+                        method: 'stream',
+                        camera_id: 0
+                    }
+                ];
+            }
+            
+            console.log("Sending logging command:", command);
             sendCommand(command);
         }
     });
@@ -256,6 +288,11 @@
             socket.send(JSON.stringify(command)); //SEND THE JSON STRING
             currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
             addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
+            
+            // Clear previous errors when sending a new command
+            if (command.command !== 'move' && command.command !== 'stop') {
+                errorDisplay.innerText = "";
+            }
         } else {
             errorDisplay.innerText = "Cannot send command: Socket not connected.";
             console.log("Socket not ready, cannot send command:", command); // Log to console

@@ -126,9 +126,16 @@ class MotorEventLogger:
             self.timeout_timer = threading.Timer(timeout, self.stop_logging)
             self.timeout_timer.daemon = True
             self.timeout_timer.start()
-        
+
+        # TODO this is temporary, just for debugging
+        try:
+            with open(os.path.join(self.base_dir, "recording_test.txt"), "w") as f:
+                f.write(f"Recording started at {datetime.now()}")
+        except Exception as e:
+            print(f"Error writing test file: {e}") 
         return True, f"Started logging to {episode_dir}"
-    
+
+
     def stop_logging(self):
         """
         Stop the current logging episode
