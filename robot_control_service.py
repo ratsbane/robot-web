@@ -2,17 +2,18 @@
 
 import socket
 import time
-
 import os
 import sys
 import json
-import threading  # IMPORT THREADING
+import threading
+
+# Import the MotorEventLogger
+from motor_event_logger import MotorEventLogger
 
 # Use the *correct* path to STservo_sdk here:
 sdk_path = os.path.abspath('/home/pi/so-arm-configure/')
 if sdk_path not in sys.path:
     sys.path.insert(0, sdk_path)
-# --- End added lines ---
 
 from arm_control import MotorController, scan_interfaces_for_arm, PortHandler, sts, CALIBRATED_MOTORS
 
@@ -55,30 +56,63 @@ DEFAULT_SPEED = 500 # Define default speed.
 command_queue = [] # List for commands  # Use a list as a simple queue
 current_moving_motor = None  # Keep track of the currently moving motor
 
+# Define video sources for recording
+video_sources = [
+    {
+        'source': 'http://localhost:5000/video_feed', # Update with your actual stream URL
+        'method': 'stream',
+        'camera_id': 0
+    }
+]
+
+# Initialize the motor event logger with video sources
+logger = MotorEventLogger(base_dir="robot_logs", video_sources=video_sources)
+
 def handle_client(conn, addr):
-    #print(f"[{time.time()}] Connected by {addr}")  # Timestamp
     with conn:
         while True:
             try:
-                #print(f"[{time.time()}] Waiting to receive data...")
                 data = conn.recv(1024)  # Receive data from the client
                 print(f"[{time.time()}] Data received: {data}")
                 if not data:
-                    #print(f"[{time.time()}] No data received. Breaking.")
                     break  # Client disconnected
                 try:
                     command = json.loads(data.decode('utf-8').strip()) #Expect a JSON
                 except:
                     conn.sendall(b"Error: Invalid JSON format")
                     continue
-                #print(f"[{time.time()}] Received command: {command}")
 
+                # Handle recording commands
+                if command.get('command') == 'start_logging':
+                    action_name = command.get('action_name', 'unnamed_action')
+                    description = command.get('description', '')
+                    timeout = command.get('timeout')
+                    
+                    # Check if video sources are provided in the command
+                    if 'video_sources' in command:
+                        logger.setup_video_sources(command['video_sources'])
+                    
+                    success, message = logger.start_logging(
+                        action_name=action_name, 
+                        description=description, 
+                        timeout=timeout
+                    )
+                    result = {"success": success, "message": message}
+                    conn.sendall(json.dumps(result).encode('utf-8'))
+                    continue
+                
+                elif command.get('command') == 'stop_logging':
+                    success, message = logger.stop_logging()
+                    result = {"success": success, "message": message}
+                    conn.sendall(json.dumps(result).encode('utf-8'))
+                    continue
+                
+                # Standard commands go to the queue
                 command_queue.append(command) #Put command on the queue.
                 result = {"success":True, "message": "Command received"} #Always send a JSON repsonse
                 conn.sendall(json.dumps(result).encode('utf-8'))
 
             except ConnectionResetError:
-                #print(f"[{time.time()}] Client disconnected unexpectedly")
                 break
             except Exception as e:
                 print(f"[{time.time()}] Error handling client: {e}")
@@ -93,7 +127,6 @@ def process_commands():
     while True:
         if len(command_queue) > 0:  # Always process commands if they exist
             command = command_queue.pop(0)  # Get the next command
-            #print(f"[{time.time()}] Processing command: {command}")
 
             motor_name = command.get('motor')
             motor_id = None
@@ -115,27 +148,95 @@ def process_commands():
                 speed = command.get('speed', DEFAULT_SPEED)  # Get speed, use default.
 
                 if motor_id is not None:
+                    # Get current position before move
+                    current_pos = None
+                    try:
+                        current_pos = motor_controller.read_pos(motor_id)
+                    except:
+                        pass
+                    
+                    # Execute the move
                     result = motor_controller.move_motor(motor_id, motor_name, direction, speed)
+                    
+                    # Log the motor event if recording is active
                     if result['success']:
                         current_moving_motor = motor_id  # Keep tracking
+                        
+                        # Try to get target position if possible
+                        target_pos = None
+                        if direction == 'max':
+                            target_pos = motor_controller.motor_limits.get(motor_id, {}).get('max')
+                        elif direction == 'min':
+                            target_pos = motor_controller.motor_limits.get(motor_id, {}).get('min')
+                        
+                        # Log the move event
+                        logger.log_motor_event(
+                            motor_id=motor_id,
+                            motor_name=motor_name,
+                            command='move',
+                            direction=direction,
+                            speed=speed,
+                            current_pos=current_pos,
+                            target_pos=target_pos
+                        )
                 else:
                     result = {'success': False, 'message': f'Invalid move command or unknown motor: {motor_name}'}
 
             elif command.get('command') == 'stop':
                 if motor_id is not None:
+                    # Get current position before stop
+                    current_pos = None
+                    try:
+                        current_pos = motor_controller.read_pos(motor_id)
+                    except:
+                        pass
+                    
+                    # Execute the stop
                     result = motor_controller.stop_motor(motor_id, motor_name)
-                    current_moving_motor = None  # Allow new commands
+                    
+                    # Log the stop event if recording is active
+                    if result['success']:
+                        current_moving_motor = None  # Allow new commands
+                        
+                        # Log the stop event
+                        logger.log_motor_event(
+                            motor_id=motor_id,
+                            motor_name=motor_name,
+                            command='stop',
+                            current_pos=current_pos
+                        )
                 else:
                     result = {'success': False, 'message': f'Unknown motor to stop: {motor_name}'}
 
             elif command.get('command') == 'stop_all':
                 result = {'success': True, 'message': "All motors stopped"}
+                
                 for motor_id in CALIBRATED_MOTORS:
                     motor_name = motor_controller.initial_motor_data[motor_id]['name']
+                    
+                    # Get current position before stop
+                    current_pos = None
+                    try:
+                        current_pos = motor_controller.read_pos(motor_id)
+                    except:
+                        pass
+                    
+                    # Stop the motor
                     motor_result = motor_controller.stop_motor(motor_id, motor_name)
+                    
+                    # Log the stop event
+                    if motor_result['success']:
+                        logger.log_motor_event(
+                            motor_id=motor_id,
+                            motor_name=motor_name,
+                            command='stop_all',
+                            current_pos=current_pos
+                        )
+                    
                     if not motor_result['success']:
                         result = motor_result  # Return the first error
                         break
+                
                 current_moving_motor = None  # Reset motor tracking
 
             else:
@@ -164,6 +265,10 @@ def main():
                 client_thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
                 client_thread.start()
     finally:
+        # Stop recording if active before exiting
+        if logger.is_logging:
+            logger.stop_logging()
+            
         if port_handler:
             print("Closing port handler...")
             port_handler.closePort() #Close the port when the service exits

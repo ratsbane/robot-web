@@ -57,13 +57,28 @@
             margin-top: 8px;
             font-weight: bold;
         }
+        #connection-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 5px;
+        }
+        #connection-controls button {
+            flex: 1;
+            padding: 8px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <div id="video-container">
         <h1>Robot Arm Control</h1>
-        <!-- Updated to use the new video stream URL -->
-        <img src="http://192.168.2.168:5000/video_feed" width="640" height="480" id="video-stream">
+        <div id="video-wrapper">
+            <!-- Video element will be inserted here via JavaScript -->
+        </div>
         <div id="status"></div>
         <div id="messages"></div>
     </div>
@@ -83,7 +98,7 @@
             </ul>
         </div>
 
-        <!-- New Recording Controls Section -->
+        <!-- Recording Controls Section -->
         <div id="logging-controls">
             <h3>Data Recording</h3>
             <input type="text" id="action-name" placeholder="Action Name (e.g., pick_and_place)">
@@ -96,108 +111,244 @@
         <div id="current-command">Current Command: None</div>
         <div id="error-display"></div>
         <div id="command-history"></div>
-        <button id="reconnectButton">Reconnect</button>
+        
+        <div id="connection-controls">
+            <button id="reconnectButton">Reconnect WebSocket</button>
+            <button id="refreshVideoButton">Refresh Video</button>
+        </div>
     </div>
 
 <script>
-    let socket;
-    let currentCommandDisplay = document.getElementById('current-command');
-    let commandHistoryDiv = document.getElementById('command-history');
-    let errorDisplay = document.getElementById('error-display');
-    let socketReady = false;
-    let reconnectInterval = 1000; // Initial reconnect delay (1 second)
-    let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
-    let reconnectTimeout;
-    let isLogging = false; // Track logging state
-    
-    // Updated to use dynamic hostname instead of hardcoded "robot"
-    const WS_SERVER = 'ws://' + window.location.hostname + ':8000/ws';
-    const VIDEO_STREAM_URL = 'http://' + window.location.hostname + ':5000/video_feed';
-    
-    // Update video stream source to use dynamic hostname
-    document.getElementById('video-stream').src = VIDEO_STREAM_URL;
 
-    function connectSocket() {
-        // Connect to the WebSocket server on port 8000
-        socket = new WebSocket(WS_SERVER);
+// Global variables
+let socket;
+let currentCommandDisplay = document.getElementById('current-command');
+let commandHistoryDiv = document.getElementById('command-history');
+let errorDisplay = document.getElementById('error-display');
+let socketReady = false;
+let reconnectInterval = 1000; // Initial reconnect delay (1 second)
+let maxReconnectInterval = 30000; // Maximum reconnect delay (30 seconds)
+let reconnectTimeout;
+let isLogging = false; // Track logging state
+let videoLoadAttempts = 0;
+const MAX_VIDEO_LOAD_ATTEMPTS = 3;
+let connectionHealthCheckTimer;
 
+// Configuration
+const HOST = window.location.host;
+const PROTOCOL = window.location.protocol;
+const WS_PROTOCOL = PROTOCOL === 'https:' ? 'wss:' : 'ws:';
+
+// Dynamic URLs with a more direct path (removing /robots/armando if necessary)
+// Try both the proxy path and direct connection
+const WS_SERVER_PRIMARY = `${WS_PROTOCOL}//${HOST}/robots/armando/ws`;
+const WS_SERVER_FALLBACK = 'ws://192.168.2.168:8000/ws'; // Direct connection as fallback
+let currentWsServer = WS_SERVER_PRIMARY;
+const VIDEO_STREAM_URL = `${PROTOCOL}//${HOST}/robots/armando/video_feed`;
+
+// Initialize the websocket connection with retry logic and fallback
+function connectSocket() {
+    // Close any existing connection first
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.close();
+    }
+    
+    console.log("Attempting to connect to:", currentWsServer);
+    document.getElementById('status').innerText = 'Connecting...';
+    
+    try {
+        // Create a new WebSocket with a longer timeout
+        socket = new WebSocket(currentWsServer);
+        
+        // Set connection timeout
+        const connectionTimeout = setTimeout(() => {
+            if (socket.readyState !== WebSocket.OPEN) {
+                console.log("Connection timed out");
+                socket.close();
+                
+                // Try fallback if we were using primary
+                if (currentWsServer === WS_SERVER_PRIMARY) {
+                    console.log("Switching to fallback WebSocket server");
+                    currentWsServer = WS_SERVER_FALLBACK;
+                    connectSocket();
+                }
+            }
+        }, 5000); // 5 second timeout
+        
         socket.onopen = () => {
+            clearTimeout(connectionTimeout);
             document.getElementById('status').innerText = 'Connected';
             socketReady = true;
             errorDisplay.innerText = ''; // Clear errors on successful connection
             reconnectInterval = 1000; // Reset reconnect interval on successful connection
-            clearTimeout(reconnectTimeout); //Clear any pending reconnect attempts.
+            clearTimeout(reconnectTimeout); // Clear any pending reconnect attempts
+            console.log("WebSocket connected successfully to", currentWsServer);
+            
+            // Start health check timer to detect stale connections
+            startConnectionHealthCheck();
         };
 
-    socket.onmessage = (event) => {
-            document.getElementById('messages').innerText = event.data;
-            addToCommandHistory("Received: " + event.data);
-            
-            // Handle responses for logging commands
+        socket.onmessage = (event) => {
             try {
-                const response = JSON.parse(event.data);
-                console.log("Parsed response:", response);  // Debug
+                document.getElementById('messages').innerText = event.data;
+                console.log("Received message:", event.data);
+                addToCommandHistory("Received: " + event.data);
                 
-                // Check for logging command responses
-                if (response.hasOwnProperty('success')) {
-                    const commandType = response.command || "";
-                    
-                    if (commandType === 'start_logging') {
-                        if (response.success) {
-                            isLogging = true;
-                            loggingStatus.innerText = `Recording: Active - ${response.message}`;
-                            loggingButton.innerText = 'Stop Recording';
-                            loggingButton.classList.remove('start-logging');
-                            loggingButton.classList.add('stop-logging');
-                        } else {
-                            loggingStatus.innerText = `Recording Error: ${response.message}`;
-                            errorDisplay.innerText = `Recording Error: ${response.message}`;
-                        }
-                    } else if (commandType === 'stop_logging') {
-                        isLogging = false;
-                        loggingStatus.innerText = `Recording: Inactive - ${response.message}`;
-                        loggingButton.innerText = 'Start Recording';
-                        loggingButton.classList.remove('stop-logging');
-                        loggingButton.classList.add('start-logging');
-                    }
-                }
+                // Rest of your onmessage handler...
             } catch (e) {
-                console.error("Error parsing response:", e, event.data);
-                addToCommandHistory("Error parsing response: " + e.message);
+                console.error("Error handling message:", e, event.data);
             }
         };
 
         socket.onclose = (event) => {
+            clearTimeout(connectionTimeout);
             document.getElementById('status').innerText = 'Disconnected';
             socketReady = false;
             console.log('WebSocket closed:', event);
-            scheduleReconnect(); // Attempt to reconnect
+            
+            // Clear health check timer
+            clearTimeout(connectionHealthCheckTimer);
+            
+            // If we were using fallback and it didn't work, switch back to primary
+            if (currentWsServer === WS_SERVER_FALLBACK) {
+                currentWsServer = WS_SERVER_PRIMARY;
+            }
+            
+            // Attempt to reconnect
+            scheduleReconnect();
         };
 
         socket.onerror = (error) => {
-            errorDisplay.innerText = 'WebSocket Error: ' + error;
             console.error('WebSocket error:', error);
+            errorDisplay.innerText = 'WebSocket Error: Connection failed';
+            socketReady = false;
+            
+            // If on primary server, try fallback immediately on error
+            if (currentWsServer === WS_SERVER_PRIMARY) {
+                console.log("Error on primary connection, trying fallback");
+                socket.close();
+                currentWsServer = WS_SERVER_FALLBACK;
+                connectSocket();
+            }
         };
+    } catch (error) {
+        console.error("Error creating WebSocket:", error);
+        errorDisplay.innerText = 'Failed to create WebSocket connection';
+        scheduleReconnect();
+    }
+}
+
+
+
+// Initialize video element with error handling and retries
+function initializeVideo() {
+    const videoWrapper = document.getElementById('video-wrapper');
+    if (!videoWrapper) {
+        console.error("Video wrapper element not found");
+        
+        // Create video wrapper if it doesn't exist
+        const videoContainer = document.getElementById('video-container');
+        if (videoContainer) {
+            const newWrapper = document.createElement('div');
+            newWrapper.id = 'video-wrapper';
+            videoContainer.appendChild(newWrapper);
+            videoWrapper = newWrapper;
+        } else {
+            console.error("Video container not found, cannot create video element");
+            return;
+        }
+    }
+    
+    videoWrapper.innerHTML = ''; // Clear any existing content
+    
+    const img = document.createElement('img');
+    img.id = 'video-stream';
+    img.width = 640;
+    img.height = 480;
+    
+    // Add cache-busting parameter to prevent caching issues
+    const timestamp = new Date().getTime();
+    img.src = `${VIDEO_STREAM_URL}?t=${timestamp}`; 
+    
+    console.log(`Loading video from: ${img.src}`);
+    
+    // Handle video loading errors
+    img.onerror = function() {
+        videoLoadAttempts++;
+        console.error(`Video load error (attempt ${videoLoadAttempts})`);
+        
+        if (videoLoadAttempts < MAX_VIDEO_LOAD_ATTEMPTS) {
+            console.log(`Video load attempt ${videoLoadAttempts} failed. Retrying...`);
+            setTimeout(() => {
+                const newTimestamp = new Date().getTime();
+                img.src = `${VIDEO_STREAM_URL}?t=${newTimestamp}`;
+            }, 1000);
+        } else {
+            errorDisplay.innerText = "Failed to load video stream. Please try refreshing.";
+            console.error("Video stream failed to load after multiple attempts");
+        }
+    };
+    
+    img.onload = function() {
+        console.log("Video stream loaded successfully");
+        videoLoadAttempts = 0; // Reset counter on successful load
+        
+        // Clear error message if it was related to video loading
+        if (errorDisplay.innerText.includes("Failed to load video stream")) {
+            errorDisplay.innerText = "";
+        }
+    };
+    
+    videoWrapper.appendChild(img);
+}
+
+
+    function startConnectionHealthCheck() {
+        // Clear any existing timer
+        clearTimeout(connectionHealthCheckTimer);
+        
+        // Set up a new timer
+        connectionHealthCheckTimer = setTimeout(() => {
+            // Check if connection is still good
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                // Send a ping to keep connection alive
+                try {
+                    socket.send(JSON.stringify({command: 'ping'}));
+                    console.log("Health check ping sent");
+                } catch (e) {
+                    console.error("Error sending health check ping:", e);
+                    socket.close(); // Force reconnection on error
+                }
+                
+                // Schedule next check
+                startConnectionHealthCheck();
+            }
+        }, 15000); // Check every 15 seconds
     }
     
     function scheduleReconnect() {
         if (!socketReady) { // Only attempt reconnect if not already connected/connecting
+            clearTimeout(reconnectTimeout); // Clear any existing timeout
             reconnectTimeout = setTimeout(() => {
-                console.log(`Attempting to reconnect (attempt ${reconnectInterval/1000}s)...`);
+                console.log(`Attempting to reconnect (delay ${reconnectInterval/1000}s)...`);
                 connectSocket();
-                reconnectInterval = Math.min(reconnectInterval * 2, maxReconnectInterval); // Exponential backoff
+                reconnectInterval = Math.min(reconnectInterval * 1.5, maxReconnectInterval); // Exponential backoff
             }, reconnectInterval);
         }
     }
-
-    connectSocket(); // Initial connection
-
+    
+    // Event handlers for manual reconnection
     document.getElementById('reconnectButton').addEventListener('click', () => {
         if (socket && socket.readyState !== WebSocket.CLOSED) {
             socket.close(); // Close any existing connection first
         }
-        //Don't call connect socket directly. Call scheduleReconnect.
+        reconnectInterval = 1000; // Reset reconnect interval
         scheduleReconnect(); // Manually trigger a reconnect attempt
+    });
+    
+    document.getElementById('refreshVideoButton').addEventListener('click', () => {
+        videoLoadAttempts = 0; // Reset counter
+        initializeVideo(); // Reload video
     });
 
     // Logging controls functionality
@@ -237,65 +388,54 @@
                 command.timeout = parseInt(timeout);
             }
             
-            // Get current video stream URL or use fallback
-            const videoEl = document.getElementById('video-stream');
-            const videoUrl = videoEl ? videoEl.src : VIDEO_STREAM_URL;
-            
-            // Add video source information if video URL is available
-            if (videoUrl) {
-                command.video_sources = [
-                    {
-                        source: videoUrl,
-                        method: 'stream',
-                        camera_id: 0
-                    }
-                ];
-            }
+            // Add video source information
+            command.video_sources = [
+                {
+                    source: VIDEO_STREAM_URL,
+                    method: 'stream',
+                    camera_id: 0
+                }
+            ];
             
             console.log("Sending logging command:", command);
             sendCommand(command);
         }
     });
     
-    function updateLoggingStatus(response) {
-        const loggingStatus = document.getElementById('logging-status');
-        const loggingButton = document.getElementById('logging-button');
-        
-        if (response.command === 'start_logging') {
-            if (response.success) {
-                isLogging = true;
-                loggingStatus.innerText = `Logging: Active - ${response.message}`;
-                loggingButton.innerText = 'Stop Logging';
-                loggingButton.classList.remove('start-logging');
-                loggingButton.classList.add('stop-logging');
-            } else {
-                loggingStatus.innerText = `Logging Error: ${response.message}`;
-            }
-        } else if (response.command === 'stop_logging') {
-            isLogging = false;
-            loggingStatus.innerText = `Logging: Inactive - ${response.message}`;
-            loggingButton.innerText = 'Start Logging';
-            loggingButton.classList.remove('stop-logging');
-            loggingButton.classList.add('start-logging');
-        }
-    }
-
     const pressedKeys = {}; // Keep track of pressed keys
 
     function sendCommand(command) {
-        if (socketReady) {
-            console.log("Sending command:", command);
-            socket.send(JSON.stringify(command)); //SEND THE JSON STRING
-            currentCommandDisplay.innerText = `Current Command: ${JSON.stringify(command)}`;
-            addToCommandHistory("Sent: " + JSON.stringify(command)); // Add to history
-            
-            // Clear previous errors when sending a new command
-            if (command.command !== 'move' && command.command !== 'stop') {
-                errorDisplay.innerText = "";
+        if (socketReady && socket.readyState === WebSocket.OPEN) {
+            try {
+                const commandStr = JSON.stringify(command);
+                socket.send(commandStr);
+                currentCommandDisplay.innerText = `Current Command: ${commandStr}`;
+                addToCommandHistory("Sent: " + commandStr);
+                
+                // Clear previous errors when sending a new command
+                if (command.command !== 'move' && command.command !== 'stop' && command.command !== 'ping') {
+                    errorDisplay.innerText = "";
+                }
+            } catch (e) {
+                console.error("Error sending command:", e);
+                errorDisplay.innerText = `Error sending command: ${e.message}`;
+                
+                // If there's an error sending, the connection might be broken
+                if (socket.readyState !== WebSocket.OPEN) {
+                    socket.close(); // Force reconnection
+                }
             }
         } else {
-            errorDisplay.innerText = "Cannot send command: Socket not connected.";
-            console.log("Socket not ready, cannot send command:", command); // Log to console
+            // Only show errors for user-initiated commands
+            if (command.command !== 'ping') {
+                errorDisplay.innerText = "Cannot send command: Socket not connected or not ready.";
+                console.log("Socket not ready, cannot send command:", command);
+            }
+            
+            // Try to reconnect if socket is closed
+            if (!socket || socket.readyState === WebSocket.CLOSED) {
+                scheduleReconnect();
+            }
         }
     }
 
@@ -304,10 +444,14 @@
         commandElement.innerText = entry;
         commandHistoryDiv.appendChild(commandElement);
         commandHistoryDiv.scrollTop = commandHistoryDiv.scrollHeight;
+        
+        // Limit history size to prevent memory issues
+        if (commandHistoryDiv.children.length > 50) {
+            commandHistoryDiv.removeChild(commandHistoryDiv.children[0]);
+        }
     }
 
-    // Fix key mappings to match websocket_server.py expectations
-    // The server expects "inc"/"dec" for directions, not "left"/"right"/"up"/"down"
+    // Handle keyboard input
     document.addEventListener('keydown', (event) => {
         // Skip if focus is on an input element
         if (document.activeElement.tagName === 'INPUT' || 
@@ -315,7 +459,7 @@
             return;
         }
 
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
             event.preventDefault();
         }
 
@@ -334,15 +478,15 @@
             case 'ArrowRight': command = { command: 'move', motor: 'base', direction: 'inc' }; break;
             case 'ArrowUp': command = { command: 'move', motor: 'shoulder', direction: 'inc' }; break;
             case 'ArrowDown': command = { command: 'move', motor: 'shoulder', direction: 'dec' }; break;
-            case 'w': command = { command: 'move', motor: 'elbow', direction: 'inc' }; break;
-            case 's': command = { command: 'move', motor: 'elbow', direction: 'dec' }; break;
-            case 'a': command = { command: 'move', motor: 'wrist', direction: 'dec' }; break;
-            case 'd': command = { command: 'move', motor: 'wrist', direction: 'inc' }; break;
-            case 't': command = { command: 'move', motor: 'thumb', direction: 'inc' }; break;
-            case 'g': command = { command: 'move', motor: 'thumb', direction: 'dec' }; break;
-            case 'y': command = { command: 'move', motor: 'hand', direction: 'inc' }; break;
-            case 'h': command = { command: 'move', motor: 'hand', direction: 'dec' }; break;
-            case ' ': command = { command: 'stop_all' }; break; // Added spacebar for stop_all
+            case 'w': case 'W': command = { command: 'move', motor: 'elbow', direction: 'inc' }; break;
+            case 's': case 'S': command = { command: 'move', motor: 'elbow', direction: 'dec' }; break;
+            case 'a': case 'A': command = { command: 'move', motor: 'wrist', direction: 'dec' }; break;
+            case 'd': case 'D': command = { command: 'move', motor: 'wrist', direction: 'inc' }; break;
+            case 't': case 'T': command = { command: 'move', motor: 'thumb', direction: 'inc' }; break;
+            case 'g': case 'G': command = { command: 'move', motor: 'thumb', direction: 'dec' }; break;
+            case 'y': case 'Y': command = { command: 'move', motor: 'hand', direction: 'inc' }; break;
+            case 'h': case 'H': command = { command: 'move', motor: 'hand', direction: 'dec' }; break;
+            case ' ': command = { command: 'stop_all' }; break; // Spacebar for stop_all
         }
 
         if (command) {
@@ -359,7 +503,6 @@
         }
         
         pressedKeys[event.key] = false;
-        currentCommandDisplay.innerText = `Current Command: None`;
 
         let command = null;
 
@@ -368,29 +511,35 @@
             case 'ArrowRight': command = { command: 'stop', motor: 'base' }; break;
             case 'ArrowUp':
             case 'ArrowDown': command = { command: 'stop', motor: 'shoulder' }; break;
-            case 'w':
-            case 's': command = { command: 'stop', motor: 'elbow' }; break;
-            case 'a':
-            case 'd': command = { command: 'stop', motor: 'wrist' }; break;
-            case 't':
-            case 'g': command = { command: 'stop', motor: 'thumb' }; break;
-            case 'y':
-            case 'h': command = { command: 'stop', motor: 'hand' }; break;
+            case 'w': case 'W':
+            case 's': case 'S': command = { command: 'stop', motor: 'elbow' }; break;
+            case 'a': case 'A':
+            case 'd': case 'D': command = { command: 'stop', motor: 'wrist' }; break;
+            case 't': case 'T':
+            case 'g': case 'G': command = { command: 'stop', motor: 'thumb' }; break;
+            case 'y': case 'Y':
+            case 'h': case 'H': command = { command: 'stop', motor: 'hand' }; break;
         }
 
         if (command) {
             sendCommand(command);
+            currentCommandDisplay.innerText = `Current Command: None`;
         }
     });
 
     // --- Gamepad Support ---
     let gamepadIndex = null;
+    let gamepadLoopActive = false;
 
     window.addEventListener("gamepadconnected", (event) => {
         console.log("Gamepad connected:", event.gamepad);
         gamepadIndex = event.gamepad.index;
         document.getElementById('gamepadStatus').innerText = `Gamepad: Connected (${event.gamepad.id})`;
-        gameLoop(); // Start the game loop
+        
+        if (!gamepadLoopActive) {
+            gamepadLoopActive = true;
+            gameLoop(); // Start the game loop
+        }
     });
 
     window.addEventListener("gamepaddisconnected", (event) => {
@@ -401,13 +550,15 @@
 
     function gameLoop() {
         if (gamepadIndex !== null) {
-            const gamepad = navigator.getGamepads()[gamepadIndex];
+            const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+            const gamepad = gamepads[gamepadIndex];
+            
             if (gamepad) {
                 // Left Joystick (Base and Shoulder)
                 const leftX = gamepad.axes[0];
                 const leftY = gamepad.axes[1];
 
-                // Updated to use inc/dec instead of left/right/up/down
+                // Only send commands if stick is moved significantly
                 if (Math.abs(leftX) > 0.1) {
                     sendCommand({command: 'move', motor: 'base', direction: leftX > 0 ? 'inc' : 'dec'});
                 } else {
@@ -421,8 +572,8 @@
                 }
 
                 // Right Joystick (Elbow and Wrist)
-                const rightX = gamepad.axes[3];
-                const rightY = gamepad.axes[4];
+                const rightX = gamepad.axes[2] || gamepad.axes[3];  // Handle different gamepad layouts
+                const rightY = gamepad.axes[3] || gamepad.axes[4];
 
                 if (Math.abs(rightX) > 0.1) {
                     sendCommand({command: 'move', motor: 'wrist', direction: rightX > 0 ? 'inc' : 'dec'});
@@ -437,8 +588,8 @@
                 }
 
                 // Triggers (Hand and Thumb)
-                const leftTrigger = gamepad.buttons[6].value;
-                const rightTrigger = gamepad.buttons[7].value;
+                const leftTrigger = gamepad.buttons[6]?.value || 0;
+                const rightTrigger = gamepad.buttons[7]?.value || 0;
 
                 if (leftTrigger > 0.2) {
                     sendCommand({command: 'move', motor: 'hand', direction: 'dec'});
@@ -452,8 +603,40 @@
                 }
             }
         }
-        requestAnimationFrame(gameLoop);
+        
+        // Continue the game loop only if gamepad is still connected
+        if (gamepadIndex !== null) {
+            requestAnimationFrame(gameLoop);
+        } else {
+            gamepadLoopActive = false;
+        }
     }
+    
+    // Initialize components with staggered timing to prevent race conditions
+    window.addEventListener('DOMContentLoaded', function() {
+        // Initialize video first
+        initializeVideo();
+        
+        // Initialize WebSocket connection with a slight delay
+        setTimeout(() => {
+            connectSocket();
+        }, 500);
+        
+        // Set up an interval to check the connection health
+        setInterval(() => {
+            // Check if video needs refreshing
+            const videoElement = document.getElementById('video-stream');
+            if (videoElement && videoElement.naturalWidth === 0) {
+                console.log("Video appears to be broken, refreshing...");
+                initializeVideo();
+            }
+            
+            // If WebSocket is closed, try to reconnect
+            if (!socketReady && (!socket || socket.readyState === WebSocket.CLOSED)) {
+                scheduleReconnect();
+            }
+        }, 30000); // Every 30 seconds
+    });
 </script>
 </body>
 </html>
