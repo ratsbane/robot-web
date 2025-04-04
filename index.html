@@ -139,12 +139,18 @@ const HOST = window.location.host;
 const PROTOCOL = window.location.protocol;
 const WS_PROTOCOL = PROTOCOL === 'https:' ? 'wss:' : 'ws:';
 
+// Determine if we're on the proxy or direct connection
+const IS_PROXY = HOST === 'secretundergroundroboticslaboratory.com';
+const PATH_PREFIX = IS_PROXY ? '/robots/armando' : '';
+
 // Dynamic URLs with a more direct path (removing /robots/armando if necessary)
 // Try both the proxy path and direct connection
 const WS_SERVER_PRIMARY = `${WS_PROTOCOL}//${HOST}/robots/armando/ws`;
 const WS_SERVER_FALLBACK = 'ws://192.168.2.168:8000/ws'; // Direct connection as fallback
 let currentWsServer = WS_SERVER_PRIMARY;
-const VIDEO_STREAM_URL = `${PROTOCOL}//${HOST}/robots/armando/video_feed`;
+
+// Video URL that works in both environments
+const VIDEO_STREAM_URL = `${PROTOCOL}//${HOST}${PATH_PREFIX}/video_feed`;
 
 // Initialize the websocket connection with retry logic and fallback
 function connectSocket() {
