@@ -1,0 +1,17 @@
+[Unit]
+Description=Simple HTTP Server for Robot Web Interface
+After=network.target
+
+[Service]
+User=root
+ExecStart=/usr/bin/python3 -m http.server 80 --directory /var/www/robot
+#StandardOutput=append:/var/log/robot/web_server.log
+StandardOutput=inherit
+StandardError=inherit
+SyslogIdentifier=http.server-robots
+Restart=always
+Umask=022
+
+[Install]
+WantedBy=multi-user.target
+
